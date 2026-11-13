@@ -1,0 +1,38 @@
+name: build-and-deploy
+on:
+  push: { branches: [main] }
+  pull_request:
+permissions: { contents: read, pages: write, id-token: write }
+concurrency: { group: pages, cancel-in-progress: true }
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: wasm32-unknown-unknown }
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+      - name: Rust tests (native)
+        run: cargo test -p easymv-engine
+      - name: JS tests
+        run: npm run test:js
+      - name: Build site (WASM + static assets)
+        run: npm run build
+      - name: Check WASM size (< 2 MB target)
+        run: |
+          size=$(stat -c%s dist/pkg/easymv_engine_bg.wasm); echo "wasm bytes: $size"
+          [ "$size" -lt 2097152 ] || echo "::warning::WASM exceeds the 2 MB target ($size bytes)"
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: dist }
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment: { name: github-pages, url: "${{ steps.d.outputs.page_url }}" }
+    steps:
+      - id: d
+        uses: actions/deploy-pages@v4
