@@ -1,0 +1,14 @@
+{
+  "name": "easymv",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:wasm": "wasm-pack build --target web --release crates/easymv-engine --out-dir ../../web/pkg",
+    "test:rust": "cargo test -p easymv-engine",
+    "test:js": "node --test web/test/animation.test.mjs web/test/features.test.mjs",
+    "test:render": "node web/test/render-smoke.cjs",
+    "serve": "python3 -m http.server 8080 --directory web",
+    "build": "npm run build:wasm && rm -rf dist && mkdir dist && cp -r web/index.html web/sync-test.html web/style.css web/js web/vendor web/pkg dist/ && rm -f dist/pkg/.gitignore && touch dist/.nojekyll",
+    "test:app": "node web/test/app-smoke.cjs"
+  }
+}

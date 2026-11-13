@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EasyMV A/V sync test</title>
+<style>body{font:15px/1.5 system-ui;max-width:42rem;margin:2rem auto;padding:0 1rem}</style></head>
+<body>
+<h1>A/V sync test kit (§8.3)</h1>
+<p>Generates a 10 s master that is a 1 Hz click track, a white image, and a project that flashes the image with each click.
+Load all three into <a href="./">EasyMV</a>, export, then check that each flash frame lines up with its click
+(required: ≤ 1 frame). A positive/negative measured offset can be fed back with
+<code>localStorage.setItem('easymv.audioOffsetMs', '&lt;ms&gt;')</code> (positive delays audio).</p>
+<p><button id="go">Download test kit</button></p>
+<script type="module">
+const SR = 48000, SECS = 10;
+function wav() {
+  const n = SR * SECS, pcm = new Int16Array(n);
+  for (let s = 0; s < SECS; s++) for (let k = 0; k < 480; k++) pcm[s * SR + k] = Math.round(Math.sin(k * 2 * Math.PI * 1000 / SR) * 0.9 * 32767);
+  const b = new ArrayBuffer(44 + pcm.byteLength), v = new DataView(b);
+  const w = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  w(0, 'RIFF'); v.setUint32(4, 36 + pcm.byteLength, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, SR, true); v.setUint32(28, SR * 2, true);
+  v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, pcm.byteLength, true);
+  new Int16Array(b, 44).set(pcm); return new Blob([b], { type: 'audio/wav' });
+}
+const save = (blob, name) => { const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: name }); a.click(); };
+document.getElementById('go').onclick = async () => {
+  save(wav(), 'sync_clicks.wav');
+  const c = Object.assign(document.createElement('canvas'), { width: 64, height: 64 });
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 64, 64);
+  save(await new Promise((r) => c.toBlob(r)), 'sync_white.png');
+  const project = { version: 4, videoFps: 30, analysisRate: 200, sampleRate: SR, resolution: [640, 360],
+    masterMix: { path: 'sync_clicks.wav' }, stems: [],
+    elements: [{ id: 'flash', type: 'static', path: 'sync_white.png', fit: 'cover', zIndex: 0, base: { opacity: 0 } }],
+    connections: [{ source: 'master', feature: 'rms', element: 'flash', property: 'opacity', curve: 'threshold', threshold: 0.2,
+      outMin: 0, outMax: 1, combine: 'replace', attackMs: 0, releaseMs: 0, origin: 'user' }] };
+  save(new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' }), 'sync_test.easymv.json');
+};
+</script></body></html>

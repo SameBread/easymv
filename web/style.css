@@ -1,0 +1,50 @@
+:root{--bg:#14151a;--panel:#1d1f27;--line:#2c2f3b;--fg:#e8e9ee;--mut:#9094a6;--acc:#ff6b9d;--err:#ff5a5f;--warn:#f5b84b;color-scheme:dark}
+@media (prefers-color-scheme:light){:root{--bg:#f4f4f7;--panel:#fff;--line:#d9dbe3;--fg:#1b1c22;--mut:#666a7a;color-scheme:light}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,sans-serif}
+header{padding:12px 16px;display:flex;gap:12px;align-items:baseline;border-bottom:1px solid var(--line)}
+h1{margin:0;font-size:20px;color:var(--acc)} h2{margin:0 0 8px;font-size:14px} .sub,.muted{color:var(--mut);font-size:12px}
+main{display:grid;grid-template-columns:minmax(260px,1fr) minmax(320px,1.6fr) minmax(300px,1.4fr);gap:12px;padding:12px}
+@media(max-width:980px){main{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:12px}
+.row{display:block;margin-bottom:8px} .row input{display:block;width:100%;margin-top:4px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0} .grid2 label{display:block;font-size:12px;color:var(--mut)}
+input,select,button{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:4px 6px}
+.grid2 input,.grid2 select{width:100%}
+button,.btn{cursor:pointer;padding:5px 10px;display:inline-block} button:hover,.btn:hover{border-color:var(--acc)} button:disabled{opacity:.4;cursor:default}
+canvas{width:100%;height:auto;background:#000;border-radius:4px;display:block}
+.transport{display:flex;gap:8px;align-items:center;margin-top:8px} .transport input{flex:1}
+progress{width:100%;margin-top:8px}
+.plain{list-style:none;padding:0;margin:0} .plain li{display:flex;gap:6px;align-items:center;margin:4px 0}
+.bar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.el,.conn{border:1px solid var(--line);border-radius:6px;padding:8px;margin:8px 0}
+.el h3{margin:0 0 6px;font-size:13px} .el .fields{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.el .fields label,.conn label{font-size:11px;color:var(--mut);display:block} .el .fields input,.el .fields select,.conn input,.conn select{width:100%}
+.conn{display:grid;grid-template-columns:repeat(4,1fr);gap:6px} .conn .full{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center}
+.banner{padding:8px 16px} .err{background:var(--err);color:#fff} .issue{font-size:12px;margin:3px 0} .issue.error{color:var(--err)} .issue.warning{color:var(--warn)}
+.tag{font-size:10px;border:1px solid var(--line);border-radius:3px;padding:0 4px;color:var(--mut)}
+
+/* ---- additions ---- */
+header .spacer,.bar .spacer{flex:1}
+header button{padding:4px 10px}
+.stage{position:relative;line-height:0;touch-action:none;user-select:none}
+.stage canvas{cursor:grab}
+#sel{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+#sel polygon{fill:none;stroke:var(--acc);stroke-width:2;vector-effect:non-scaling-stroke;stroke-dasharray:6 4}
+.el.selected{border-color:var(--acc)}
+.el h3{cursor:pointer}
+.toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--panel);border:1px solid var(--acc);border-radius:6px;padding:6px 14px;z-index:10;font-size:13px}
+.sig{margin:6px 0}
+.sig .top{display:flex;justify-content:space-between;gap:6px;align-items:center;font-size:12px}
+.sig canvas{width:100%;height:44px;display:block;background:var(--bg);border:1px solid var(--line);border-radius:4px;cursor:pointer;margin-top:3px}
+.sig .val{font-variant-numeric:tabular-nums;color:var(--acc)}
+.thumbs{display:flex;gap:4px;margin:6px 0;align-items:center}
+.thumbs canvas{height:40px;width:auto;border:1px solid var(--line);border-radius:3px;background:#000}
+dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:8px;max-width:min(900px,95vw)}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+#reorderGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:6px;max-height:60vh;overflow:auto;margin:8px 0}
+.tile{border:1px solid var(--line);border-radius:5px;padding:3px;text-align:center;font-size:11px;background:var(--bg);cursor:grab}
+.tile.over{border-color:var(--acc)} .tile canvas{width:100%;height:auto;display:block;background:#000}
+.tile .mv{display:flex;justify-content:space-between}.tile .mv button{padding:0 6px}
+@media (pointer:coarse){button,.btn,select,input{min-height:40px}.tile .mv button{min-height:32px}}
+@media (max-width:560px){.conn{grid-template-columns:repeat(2,1fr)}.el .fields{grid-template-columns:repeat(2,1fr)}main{padding:8px}}
