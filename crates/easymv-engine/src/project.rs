@@ -3,13 +3,14 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-pub const PROPERTY_COUNT: usize = 16;
+pub const PROPERTY_COUNT: usize = 18;
 pub const MAX_BATCH: usize = 64;
 
 /// Property registry. The ORDER IS THE ENGINE CONTRACT (§5.3).
 pub const PROPERTY_NAMES: [&str; PROPERTY_COUNT] = [
     "positionX", "positionY", "rotation", "scale", "scaleX", "scaleY", "mirrorX", "mirrorY",
     "opacity", "hueShift", "saturation", "brightness", "contrast", "blur", "anchorX", "anchorY",
+    "visible", "intensity",
 ];
 
 const TAU: f32 = std::f32::consts::PI * 2.0;
@@ -31,11 +32,13 @@ pub const PROPERTY_CLAMPS: [(f32, f32); PROPERTY_COUNT] = [
     (0.0, 200.0),
     (0.0, 1.0),
     (0.0, 1.0),
+    (0.0, 1.0),
+    (0.0, 4.0),
 ];
 
 /// Default base value when an element does not specify one.
 pub const PROPERTY_DEFAULTS: [f32; PROPERTY_COUNT] = [
-    0.5, 0.5, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.5, 0.5,
+    0.5, 0.5, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.5, 0.5, 1.0, 1.0,
 ];
 
 pub fn property_index(name: &str) -> Option<usize> {
@@ -74,6 +77,9 @@ pub enum ElementType {
     SpriteSheet,
     Gif,
     FrameSequence,
+    Visualizer,
+    Effect,
+    Lyrics,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -226,6 +232,51 @@ pub struct Connection {
     pub origin: Origin,
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum TrackMode {
+    #[default]
+    Override,
+    Add,
+    Multiply,
+    Mix,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum Interp {
+    Hold,
+    #[default]
+    Linear,
+    Smooth,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Key {
+    pub f: u32,
+    pub v: f32,
+    #[serde(default)]
+    pub interp: Interp,
+}
+
+fn default_mix() -> f32 {
+    0.5
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Track {
+    pub element: String,
+    pub property: String,
+    #[serde(default)]
+    pub mode: TrackMode,
+    #[serde(default = "default_mix")]
+    pub mix: f32,
+    #[serde(default)]
+    pub keys: Vec<Key>,
+}
+
 fn default_video_fps() -> f64 {
     30.0
 }
@@ -239,7 +290,7 @@ fn default_resolution() -> [u32; 2] {
     [1920, 1080]
 }
 fn default_version() -> u32 {
-    4
+    5
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -262,6 +313,8 @@ pub struct Project {
     pub elements: Vec<ElementDef>,
     #[serde(default)]
     pub connections: Vec<Connection>,
+    #[serde(default)]
+    pub tracks: Vec<Track>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -374,6 +427,33 @@ pub fn validate(p: &Project) -> Vec<Issue> {
             )));
         }
     }
+
+    // Tracks
+    let mut track_seen: HashSet<(&str, &str)> = HashSet::new();
+    for (i, t) in p.tracks.iter().enumerate() {
+        let tag = format!("track #{} ({}.{})", i, t.element, t.property);
+        if !element_ids.contains(t.element.as_str()) {
+            out.push(Issue::err(format!("{}: unknown element '{}'", tag, t.element)));
+        }
+        if property_index(&t.property).is_none() {
+            out.push(Issue::err(format!("{}: unknown property '{}'", tag, t.property)));
+        }
+        if t.keys.is_empty() {
+            out.push(Issue::err(format!("{}: track has no keys", tag)));
+        }
+        if t.keys.windows(2).any(|w| w[0].f >= w[1].f) {
+            out.push(Issue::err(format!("{}: keys must be strictly ascending by frame", tag)));
+        }
+        if t.keys.iter().any(|k| !k.v.is_finite()) {
+            out.push(Issue::err(format!("{}: key values must be finite", tag)));
+        }
+        if !(0.0..=1.0).contains(&t.mix) {
+            out.push(Issue::err(format!("{}: mix must be in 0..1", tag)));
+        }
+        if !track_seen.insert((t.element.as_str(), t.property.as_str())) {
+            out.push(Issue::err(format!("{}: duplicate track for this element and property", tag)));
+        }
+    }
     out
 }
 
@@ -402,6 +482,7 @@ fn validate_element(e: &ElementDef, video_fps: f64, out: &mut Vec<Issue>) {
                 )));
             }
         }
+        ElementType::Visualizer | ElementType::Effect | ElementType::Lyrics => {}
         ElementType::FrameSequence => {
             if e.zip_path.as_deref().map_or(true, str::is_empty) {
                 out.push(Issue::err(format!("element '{}': 'zipPath' is required", id)));
@@ -548,5 +629,58 @@ mod tests {
         assert_eq!(property_index("scale"), Some(3));
         assert_eq!(property_index("blur"), Some(13));
         assert_eq!(property_index("anchorY"), Some(15));
+        assert_eq!(property_index("visible"), Some(16));
+        assert_eq!(property_index("intensity"), Some(17));
+        assert_eq!(PROPERTY_COUNT, 18);
+        assert_eq!(PROPERTY_DEFAULTS[16], 1.0);
+        assert_eq!(PROPERTY_CLAMPS[17], (0.0, 4.0));
+    }
+
+    #[test]
+    fn new_element_kinds_need_no_path() {
+        let mut p = sample_project();
+        for (id, k) in [("v", "visualizer"), ("fx", "effect"), ("ly", "lyrics")] {
+            let e: ElementDef = serde_json::from_str(&format!(
+                r#"{{"id":"{id}","type":"{k}","vis":{{"shape":"circle"}},"lines":[]}}"#
+            ))
+            .unwrap();
+            p.elements.push(e);
+        }
+        assert!(!has_errors(&validate(&p)), "{:?}", validate(&p).iter().map(|i| &i.message).collect::<Vec<_>>());
+        assert_eq!(p.version, 4);
+        let q: Project = serde_json::from_str(r#"{"masterMix":{"path":"m"}}"#).unwrap();
+        assert_eq!(q.version, 5);
+    }
+
+    #[test]
+    fn track_validation() {
+        let mut p = sample_project();
+        let t = |el: &str, prop: &str, keys: &str, mix: f32| -> Track {
+            serde_json::from_str(&format!(
+                r#"{{"element":"{el}","property":"{prop}","mix":{mix},"keys":{keys}}}"#
+            ))
+            .unwrap()
+        };
+        p.tracks = vec![t("bg", "opacity", r#"[{"f":0,"v":0},{"f":10,"v":1,"interp":"smooth"}]"#, 0.5)];
+        assert!(!has_errors(&validate(&p)));
+        let bad = |tr: Track, needle: &str| {
+            let mut q = sample_project();
+            q.tracks = vec![tr];
+            assert!(validate(&q).iter().any(|i| i.message.contains(needle)), "{needle}");
+        };
+        bad(t("nope", "opacity", r#"[{"f":0,"v":0}]"#, 0.5), "unknown element");
+        bad(t("bg", "bogus", r#"[{"f":0,"v":0}]"#, 0.5), "unknown property");
+        bad(t("bg", "opacity", "[]", 0.5), "no keys");
+        bad(t("bg", "opacity", r#"[{"f":5,"v":0},{"f":5,"v":1}]"#, 0.5), "ascending");
+        bad(t("bg", "opacity", r#"[{"f":0,"v":0}]"#, 1.5), "mix");
+        let mut q = sample_project();
+        let a = t("bg", "opacity", r#"[{"f":0,"v":0}]"#, 0.5);
+        q.tracks = vec![a.clone(), a];
+        assert!(validate(&q).iter().any(|i| i.message.contains("duplicate track")));
+        let mut q = sample_project();
+        let mut a = t("bg", "opacity", r#"[{"f":0,"v":0}]"#, 0.5);
+        a.keys[0].v = f32::NAN;
+        q.tracks = vec![a];
+        assert!(validate(&q).iter().any(|i| i.message.contains("finite")));
     }
 }

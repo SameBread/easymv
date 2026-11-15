@@ -1,6 +1,6 @@
 # EasyMV
 
-Browser-based automatic music-video generator. Implements design doc v0.4: Rust/WASM audio engine
+Browser-based automatic music-video generator. Implements design doc v0.5 (v0.4 engine plus the redesigned editor): Rust/WASM audio engine
 (`crates/easymv-engine`), JS/WebGL2 renderer, WebCodecs export. Static site, no backend.
 
 ## Run
@@ -91,3 +91,21 @@ browser: open `sync-test.html`, download the kit, export, and measure; a measure
 
 Not implemented: directory upload; a UI for the A/V offset; undo of audio settings (sample/analysis rate).
 Deferred per the design doc: BPM/beat tracking, threading, lyrics, `wgpu`, audio passthrough.
+
+
+## What is new in v0.5
+
+- **Editor:** Material 3 look, menu bar (File, Edit, View, Layer, Timeline, Audio, Window, Settings, Help), draggable and interchangeable Dockview panels, saved and named workspaces (built-ins Compose, Animate, Lyrics, Mix; your own are stored in the browser and can be exported and imported as JSON). On a phone: preview on top, bottom navigation, one panel at a time.
+- **Layers and Inspector:** Clip Studio style layer list with drag-to-reorder and a typed Order field. Every property row has a keyframe diamond and sound-link chips with a live meter and an editable mapping graph.
+- **Signals panel:** your sounds and their six features; drag a feature onto a property to connect it.
+- **Timeline:** per-layer visibility bars (hidden layers are not decoded, simulated or drawn), keyframes with hold/linear/smooth, sections, beat snapping. Per property the timeline can override the sound, blend with it (add or multiply) or mix.
+- **Visualizer layers:** bars, spikes, dots and waveform wrapped around a line, circle, triangle, square, pentagon, hexagon, star or heart.
+- **Effects:** snow, dust, glitter, sparks, confetti, rain, bubbles and retro pixel fire. All are GPU particles that are a pure function of time, so scrubbing and export match the preview. A lo-fi option snaps them to a pixel grid.
+- **Lyrics:** paste words, tap along to time them, LRC import and export, fonts including your own font file, animations, karaoke highlight and automatic placement that is the same on every run.
+
+## Tests
+
+    npm run test:rust     # engine
+    npm run test:js       # pure modules: animation, shapes, visualizer, lyrics, timeline
+    npm run test:render   # WebGL output in headless Chromium (needs playwright)
+    npm run test:app      # drives the whole UI against a mock engine (needs playwright)

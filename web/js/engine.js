@@ -67,6 +67,11 @@ export class EngineBridge {
   masterPcm() {
     return new Float32Array(wasmMemory.buffer, this.engine.master_pcm_ptr(), this.engine.master_pcm_len());
   }
+  /** Mono signal of any source as a Float32Array view (valid until memory grows). */
+  sourceMono(id) {
+    const len = this.engine.source_mono_len(id);
+    return len ? new Float32Array(wasmMemory.buffer, this.engine.source_mono_ptr(id), len) : null;
+  }
   get masterInfo() {
     return {
       sampleRate: this.engine.master_sample_rate(),

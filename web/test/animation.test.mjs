@@ -6,7 +6,9 @@ import {
 } from '../js/animation.js';
 
 test('property order matches the engine contract', () => {
-  assert.equal(PROPERTY_NAMES.length, 16);
+  assert.equal(PROPERTY_NAMES.length, 18);
+  assert.equal(P.visible, 16);
+  assert.equal(P.intensity, 17);
   assert.equal(P.positionX, 0);
   assert.equal(P.scale, 3);
   assert.equal(P.blur, 13);
@@ -127,23 +129,37 @@ test('fit modes', () => {
   assert.deepEqual(fitSize('cover', 200, 100, 1000, 1000), [2000, 1000]);
 });
 
-test('buildPlan: z-order, and routing does not change the internal frame', () => {
-  const mk = (id, type, z, extra = {}) => ({
+test('buildPlan: array order is paint order, and routing does not change the internal frame', () => {
+  const mk = (id, type, extra = {}) => ({
     ready: true,
     frameCount: 12,
     timeline: [0, 100, 200],
-    def: { id, type, zIndex: z, internalFps: 12, loopMode: 'loop', ...extra },
+    def: { id, type, internalFps: 12, loopMode: 'loop', ...extra },
   });
-  const assets = [mk('hero', 'spriteSheet', 1), mk('bg', 'static', -1), mk('mid', 'gif', 0)];
-  const viewWith = (scale) => ({ get: (e, p) => (p === 3 ? scale : 0) });
+  const assets = [mk('bg', 'static'), mk('mid', 'gif'), mk('hero', 'spriteSheet')];
+  const viewWith = (scale) => ({ get: (e, p) => (p === P.scale ? scale : p === P.opacity || p === P.visible ? 1 : 0) });
   const planA = buildPlan(assets, viewWith(1), 30, 24);
   const planB = buildPlan(assets, viewWith(9), 30, 24); // wildly different routing
   assert.deepEqual(planA.map((i) => i.asset.def.id), ['bg', 'mid', 'hero']);
   assert.deepEqual(planA.map((i) => i.frameA), planB.map((i) => i.frameA));
-  assert.notEqual(planA[0].props[3], planB[0].props[3]);
+  assert.notEqual(planA[0].props[P.scale], planB[0].props[P.scale]);
+});
+
+test('buildPlan culls hidden and fully transparent layers', () => {
+  const mk = (id) => ({ ready: true, frameCount: 1, timeline: [0], def: { id, type: 'static' } });
+  const assets = [mk('a'), mk('b'), mk('c')];
+  const view = { get: (e, p) => (p === P.visible ? (e === 1 ? 0 : 1) : p === P.opacity ? (e === 2 ? 0 : 1) : 0) };
+  assert.deepEqual(buildPlan(assets, view, 0, 30).map((i) => i.asset.def.id), ['a']);
+});
+
+test('generated layers get their own plan kinds', () => {
+  const g = (id, type) => ({ ready: true, def: { id, type } });
+  const view = { get: (e, p) => (p === P.opacity || p === P.visible ? 1 : 0) };
+  const plan = buildPlan([g('v', 'visualizer'), g('f', 'effect'), g('l', 'lyrics')], view, 10, 30);
+  assert.deepEqual(plan.map((i) => i.kind), ['visualizer', 'effect', 'lyrics']);
 });
 
 test('buildPlan skips assets that are not ready', () => {
   const a = { ready: false, def: { id: 'x', type: 'static' } };
-  assert.equal(buildPlan([a], { get: () => 0 }, 0, 30).length, 0);
+  assert.equal(buildPlan([a], { get: () => 1 }, 0, 30).length, 0);
 });

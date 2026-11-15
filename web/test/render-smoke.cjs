@@ -31,5 +31,23 @@ const srv = http.createServer((q, s) => {
     expect('translate: right side empty', o.moved[1], [255, 255, 255, 255]),
   ];
   const soft = o.blurEdge[1] > 10 && o.blurEdge[1] < 245; console.log(`${soft ? 'PASS' : 'FAIL'} blur edge is intermediate: ${o.blurEdge}`);
-  process.exit(r.every(Boolean) && soft ? 0 : 1);
+  r.push(expect('array order: later layers paint on top', o.bgOnTop, [255, 255, 255, 255]));
+  const flag = (name, ok, extra = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${ok ? '' : ' ' + extra}`); return ok; };
+  const g = [
+    flag('visualizer draws pixels', o.visLit > 200, o.visLit),
+    flag('visualizer circle leaves the centre empty', o.visCenterDark[0] + o.visCenterDark[1] + o.visCenterDark[2] < 30, o.visCenterDark),
+    flag('visualizer is deterministic after scrubbing', o.visDeterministic),
+    flag('triangle spikes draw and differ from circle bars', o.triLit > 100 && o.triDiffers, o.triLit),
+    flag('square waveform draws', o.waveLit > 50, o.waveLit),
+    flag('snow draws', o.snowLit > 30, o.snowLit),
+    flag('snow moves over time', o.snowMoves),
+    flag('snow is deterministic after scrubbing', o.snowDeterministic),
+    flag('pixel fire draws', o.fireLit > 200, o.fireLit),
+    flag('lo-fi glitter draws', o.lofiLit > 5, o.lofiLit),
+    flag('lyrics render text', o.lyricsLit > 100, o.lyricsLit),
+    flag('lyrics disappear after their window', o.lyricsGone < 5, o.lyricsGone),
+    flag('hidden layer draws exactly like no layer', o.cullEqual),
+    flag('hidden layer is dropped from the plan', o.visFlagCulled),
+  ];
+  process.exit(r.every(Boolean) && soft && g.every(Boolean) ? 0 : 1);
 });

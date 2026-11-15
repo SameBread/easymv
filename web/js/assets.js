@@ -95,6 +95,12 @@ export class GifAsset extends BaseAsset {
   dispose() { this.decoder?.free(); this.decoder = null; }
 }
 
+/** Procedural layers (visualizer, effect, lyrics) have no files; they are always ready. */
+export class GeneratedAsset extends BaseAsset {
+  constructor(def) { super(def); this.ready = true; }
+  textureBytes() { return 0; }
+}
+
 function unzipAsync(bytes) {
   return new Promise((resolve, reject) => unzip(bytes, (err, files) => (err ? reject(err) : resolve(files))));
 }
@@ -160,6 +166,7 @@ export class SequenceAsset extends BaseAsset {
  * @param files Map<string, File> keyed by project path
  */
 export async function loadAsset(def, files, wasm, onProgress) {
+  if (def.type === 'visualizer' || def.type === 'effect' || def.type === 'lyrics') return new GeneratedAsset(def);
   const need = (path) => {
     const f = files.get(path);
     if (!f) throw new Error(`element '${def.id}': file '${path}' has not been provided`);

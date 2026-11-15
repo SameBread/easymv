@@ -2,16 +2,26 @@
 // Mirrors the vertex shader in renderer.js (translate * rotate * scale * mirror * anchor).
 
 import { P, defaultFit, fitSize } from './animation.js';
+import { visSettings, visExtent } from './visualizer.js';
+import { fxSettings } from './effects.js';
+import { lyricsSettings } from './lyrics.js';
 
 function geometry(item, cw, ch) {
   const { asset, props } = item;
-  const [bw, bh] = fitSize(defaultFit(asset.def), asset.width, asset.height, cw, ch);
+  let bw; let bh; let offY = 0;
+  if (item.kind === 'visualizer') { const e = visExtent(visSettings(asset.def), Math.min(cw, ch)); bw = e.w; bh = e.h; }
+  else if (item.kind === 'effect') { const f = fxSettings(asset.def); bw = f.area[0] * cw; bh = f.area[1] * ch; }
+  else if (item.kind === 'lyrics') {
+    const l = lyricsSettings(asset.def);
+    bw = l.style.maxWidth * cw; bh = l.style.size * ch * 2.6;
+    offY = ({ lower: 0.34, upper: -0.34 }[l.layout.mode] ?? 0) * ch;
+  } else [bw, bh] = fitSize(defaultFit(asset.def), asset.width, asset.height, cw, ch);
   const sc = props[P.scale];
   return {
-    px: props[P.positionX] * cw, py: props[P.positionY] * ch,
+    px: props[P.positionX] * cw, py: props[P.positionY] * ch + offY,
     w: bw * sc * props[P.scaleX], h: bh * sc * props[P.scaleY],
     rot: props[P.rotation],
-    ax: props[P.anchorX], ay: props[P.anchorY],
+    ax: item.kind === 'image' ? props[P.anchorX] : 0.5, ay: item.kind === 'image' ? props[P.anchorY] : 0.5,
     mx: props[P.mirrorX] >= 0.5 ? -1 : 1, my: props[P.mirrorY] >= 0.5 ? -1 : 1,
   };
 }

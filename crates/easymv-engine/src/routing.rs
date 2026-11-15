@@ -32,6 +32,47 @@ struct CompiledConn {
     threshold: f32,
 }
 
+#[derive(Clone, Debug)]
+struct CompiledTrack {
+    slot: usize,
+    mode: TrackMode,
+    mix: f32,
+    hold_only: bool,
+    keys: Vec<Key>,
+}
+
+impl CompiledTrack {
+    fn value(&self, frame: usize) -> f32 {
+        let f = frame as u32;
+        let k = &self.keys;
+        if f <= k[0].f {
+            return k[0].v;
+        }
+        let last = k.len() - 1;
+        if f >= k[last].f {
+            return k[last].v;
+        }
+        // largest i with k[i].f <= f
+        let i = k.partition_point(|x| x.f <= f) - 1;
+        let (a, b) = (k[i], k[i + 1]);
+        let interp = if self.hold_only { Interp::Hold } else { a.interp };
+        match interp {
+            Interp::Hold => a.v,
+            Interp::Linear => {
+                let t = (f - a.f) as f32 / (b.f - a.f) as f32;
+                a.v + (b.v - a.v) * t
+            }
+            Interp::Smooth => {
+                let t = (f - a.f) as f32 / (b.f - a.f) as f32;
+                let t = t * t * (3.0 - 2.0 * t);
+                a.v + (b.v - a.v) * t
+            }
+        }
+    }
+}
+
+const VISIBLE: usize = 16;
+
 /// Immutable, pure evaluator over cached video-rate series.
 #[derive(Clone, Debug, Default)]
 pub struct Router {
@@ -41,6 +82,8 @@ pub struct Router {
     pooled: Vec<Vec<f32>>,
     replaces: Vec<CompiledConn>,
     others: Vec<CompiledConn>,
+    /// One optional track per slot (element_count * PROPERTY_COUNT).
+    tracks: Vec<Option<CompiledTrack>>,
 }
 
 /// Normalized feature series for one source, indexed by feature.
@@ -104,7 +147,23 @@ impl Router {
             }
         }
 
-        Ok(Router { element_count: project.elements.len(), total_frames, base, pooled, replaces, others })
+        let mut tracks: Vec<Option<CompiledTrack>> = vec![None; project.elements.len() * PROPERTY_COUNT];
+        for t in &project.tracks {
+            let ei = *elem_idx.get(t.element.as_str()).ok_or_else(|| format!("unknown element '{}'", t.element))?;
+            let pi = property_index(&t.property).ok_or_else(|| format!("unknown property '{}'", t.property))?;
+            if t.keys.is_empty() {
+                return Err(format!("track {}.{} has no keys", t.element, t.property));
+            }
+            tracks[ei * PROPERTY_COUNT + pi] = Some(CompiledTrack {
+                slot: ei * PROPERTY_COUNT + pi,
+                mode: t.mode,
+                mix: t.mix.clamp(0.0, 1.0),
+                hold_only: pi == VISIBLE,
+                keys: t.keys.clone(),
+            });
+        }
+
+        Ok(Router { element_count: project.elements.len(), total_frames, base, pooled, replaces, others, tracks })
     }
 
     /// Replace base values without recompiling (used for live drag/scale edits).
@@ -130,33 +189,70 @@ impl Router {
         c.out_min + (c.out_max - c.out_min) * t
     }
 
-    /// Evaluate one frame into `out` (len == element_count * PROPERTY_COUNT).
-    /// Pure: depends only on `frame` and the compiled state.
-    pub fn evaluate_frame(&self, frame: usize, out: &mut [f32]) {
-        debug_assert_eq!(out.len(), self.element_count * PROPERTY_COUNT);
-        let frame = frame.min(self.total_frames.saturating_sub(1));
-        out.copy_from_slice(&self.base);
-
-        // Step 2: the (single) replace connection sets the starting value.
-        for c in &self.replaces {
-            out[c.slot] = self.value(c, frame);
+    /// Apply the audio pipeline for one slot starting from `start`.
+    fn audio_slot(&self, slot: usize, start: f32, frame: usize) -> f32 {
+        let mut a = start;
+        for c in self.replaces.iter().filter(|c| c.slot == slot) {
+            a = self.value(c, frame);
         }
-        // Step 3: add / multiply / max / min in array order.
-        for c in &self.others {
+        for c in self.others.iter().filter(|c| c.slot == slot) {
             let v = self.value(c, frame);
-            let a = &mut out[c.slot];
             match c.combine {
-                Combine::Add => *a += v,
-                Combine::Multiply => *a *= v,
-                Combine::Max => *a = a.max(v),
-                Combine::Min => *a = a.min(v),
+                Combine::Add => a += v,
+                Combine::Multiply => a *= v,
+                Combine::Max => a = a.max(v),
+                Combine::Min => a = a.min(v),
                 Combine::Replace => unreachable!(),
             }
         }
-        // Step 4: clamp.
-        for (i, v) in out.iter_mut().enumerate() {
-            let (lo, hi) = PROPERTY_CLAMPS[i % PROPERTY_COUNT];
-            *v = if v.is_finite() { v.clamp(lo, hi) } else { PROPERTY_DEFAULTS[i % PROPERTY_COUNT].clamp(lo, hi) };
+        a
+    }
+
+    /// Final (clamped) value of one slot.
+    fn slot_value(&self, slot: usize, frame: usize) -> f32 {
+        let base = self.base[slot];
+        let v = match &self.tracks[slot] {
+            None => self.audio_slot(slot, base, frame),
+            Some(t) => {
+                let tl = t.value(frame);
+                match t.mode {
+                    TrackMode::Override => tl,
+                    TrackMode::Add => self.audio_slot(slot, tl, frame),
+                    TrackMode::Multiply => tl * self.audio_slot(slot, 1.0, frame),
+                    TrackMode::Mix => {
+                        let a = self.audio_slot(slot, base, frame);
+                        a + (tl - a) * t.mix
+                    }
+                }
+            }
+        };
+        let pi = slot % PROPERTY_COUNT;
+        let (lo, hi) = PROPERTY_CLAMPS[pi];
+        if v.is_finite() { v.clamp(lo, hi) } else { PROPERTY_DEFAULTS[pi].clamp(lo, hi) }
+    }
+
+    /// Evaluate one frame into `out` (len == element_count * PROPERTY_COUNT).
+    /// Pure: depends only on `frame` and the compiled state.
+    /// Order per property: base -> timeline -> audio connections -> clamp.
+    /// The `visible` slot is evaluated first; a hidden element skips all other work.
+    pub fn evaluate_frame(&self, frame: usize, out: &mut [f32]) {
+        debug_assert_eq!(out.len(), self.element_count * PROPERTY_COUNT);
+        let frame = frame.min(self.total_frames.saturating_sub(1));
+        for e in 0..self.element_count {
+            let o = e * PROPERTY_COUNT;
+            let vis = self.slot_value(o + VISIBLE, frame);
+            if vis < 0.5 {
+                for p in 0..PROPERTY_COUNT {
+                    let (lo, hi) = PROPERTY_CLAMPS[p];
+                    let b = self.base[o + p];
+                    out[o + p] = if b.is_finite() { b.clamp(lo, hi) } else { PROPERTY_DEFAULTS[p].clamp(lo, hi) };
+                }
+                out[o + VISIBLE] = 0.0;
+                continue;
+            }
+            for p in 0..PROPERTY_COUNT {
+                out[o + p] = if p == VISIBLE { vis } else { self.slot_value(o + p, frame) };
+            }
         }
     }
 }
@@ -279,12 +375,12 @@ mod tests {
         let r = Router::compile(&p, &src, 10).unwrap();
         let mut fwd = Vec::new();
         for f in 0..10 {
-            let mut o = vec![0.0; 16];
+            let mut o = vec![0.0; PROPERTY_COUNT];
             r.evaluate_frame(f, &mut o);
             fwd.push(o);
         }
         for f in (0..10).rev() {
-            let mut o = vec![0.0; 16];
+            let mut o = vec![0.0; PROPERTY_COUNT];
             r.evaluate_frame(f, &mut o);
             assert_eq!(o, fwd[f]);
         }
@@ -294,5 +390,74 @@ mod tests {
     fn out_of_range_frame_clamps() {
         let p = project(vec![conn(Combine::Add, 0.0, 0.2, "scaleX")]);
         assert_eq!(eval(&p, 9), eval(&p, 1000));
+    }
+
+    fn tproject(track_json: &str, conns: Vec<Connection>) -> Project {
+        let mut p = project(conns);
+        p.tracks = vec![serde_json::from_str(track_json).unwrap()];
+        p
+    }
+
+    #[test]
+    fn interpolation_hold_linear_smooth() {
+        let keys = |i: &str| format!(
+            r#"{{"element":"e","property":"positionX","keys":[{{"f":2,"v":0.2,"interp":"{i}"}},{{"f":6,"v":0.6}}]}}"#
+        );
+        let hold = tproject(&keys("hold"), vec![]);
+        let lin = tproject(&keys("linear"), vec![]);
+        let sm = tproject(&keys("smooth"), vec![]);
+        assert!((eval(&hold, 0)[0] - 0.2).abs() < 1e-6); // before first key
+        assert!((eval(&hold, 5)[0] - 0.2).abs() < 1e-6);
+        assert!((eval(&hold, 6)[0] - 0.6).abs() < 1e-6);
+        assert!((eval(&hold, 9)[0] - 0.6).abs() < 1e-6); // after last key
+        assert!((eval(&lin, 4)[0] - 0.4).abs() < 1e-6);
+        assert!((eval(&sm, 4)[0] - 0.4).abs() < 1e-6); // midpoint
+        assert!((eval(&sm, 3)[0] - (0.2 + 0.4 * 0.15625)).abs() < 1e-6); // t=.25 -> 0.15625
+    }
+
+    #[test]
+    fn track_modes_against_audio() {
+        // rms ramp 0..1; connection adds 0..0.2 to scaleX. Track holds 3.0 (override etc.)
+        let track = |m: &str| format!(
+            r#"{{"element":"e","property":"scaleX","mode":"{m}","mix":0.25,"keys":[{{"f":0,"v":3.0}}]}}"#
+        );
+        let c = || vec![conn(Combine::Add, 0.0, 0.2, "scaleX")];
+        let audio = eval(&project(c()), 9)[4]; // 1.0 + 0.2 = 1.2
+        assert!((audio - 1.2).abs() < 1e-3);
+        assert_eq!(eval(&tproject(&track("override"), c()), 9)[4], 3.0);
+        assert!((eval(&tproject(&track("add"), c()), 9)[4] - 3.2).abs() < 1e-3);
+        // multiply: factor = 1.0 + 0.2 = 1.2 -> 3.6
+        assert!((eval(&tproject(&track("multiply"), c()), 9)[4] - 3.6).abs() < 1e-3);
+        // mix 0.25: 1.2 + (3.0 - 1.2) * .25 = 1.65
+        assert!((eval(&tproject(&track("mix"), c()), 9)[4] - 1.65).abs() < 1e-3);
+        // no connections: just the timeline value
+        assert_eq!(eval(&tproject(&track("add"), vec![]), 4)[4], 3.0);
+    }
+
+    #[test]
+    fn visible_track_is_hold_only_and_short_circuits() {
+        let tr = r#"{"element":"e","property":"visible","keys":[{"f":0,"v":1.0,"interp":"smooth"},{"f":5,"v":0.0},{"f":8,"v":1.0}]}"#;
+        let p = tproject(tr, vec![conn(Combine::Add, 0.0, 0.2, "scaleX")]);
+        for f in 0..5 {
+            assert_eq!(eval(&p, f)[16], 1.0, "frame {f}");
+        }
+        let hidden = eval(&p, 6);
+        assert_eq!(hidden[16], 0.0);
+        // other props = clamped base: connection ignored (scaleX base 1.0), opacity base 0.9
+        assert_eq!(hidden[4], 1.0);
+        assert!((hidden[8] - 0.9).abs() < 1e-6);
+        assert!(hidden.iter().all(|v| v.is_finite()));
+        assert_eq!(eval(&p, 9)[16], 1.0);
+        assert!(eval(&p, 9)[4] > 1.15);
+    }
+
+    #[test]
+    fn evaluation_with_tracks_is_order_independent() {
+        let tr = r#"{"element":"e","property":"rotation","mode":"add","keys":[{"f":1,"v":0.0},{"f":8,"v":2.0,"interp":"smooth"}]}"#;
+        let p = tproject(tr, vec![conn(Combine::Add, 0.0, 0.3, "rotation")]);
+        let fwd: Vec<_> = (0..10).map(|f| eval(&p, f)).collect();
+        for f in (0..10).rev() {
+            assert_eq!(eval(&p, f), fwd[f]);
+        }
     }
 }

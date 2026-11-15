@@ -129,6 +129,81 @@ pub fn extract(mono: &[f32], sr: u32, rate: u32) -> FeatureTable {
     table
 }
 
+/// Log-spaced band spectrum on the analysis grid, flat frame-major
+/// `[frame * bands + band]`, normalized to 0..1 (silent input => all zeros).
+/// Bands span ~40 Hz..min(16 kHz, Nyquist) with a mild +3 dB/octave tilt.
+pub fn band_spectrum(mono: &[f32], sr: u32, rate: u32, bands: usize) -> Vec<f32> {
+    let n_frames = analysis_frame_count(mono.len(), sr, rate);
+    let mut out = vec![0.0f32; n_frames * bands];
+    if n_frames == 0 || bands == 0 {
+        return out;
+    }
+    let mut planner = RealFftPlanner::<f32>::new();
+    let fft = planner.plan_fft_forward(FFT_SIZE);
+    let mut input = fft.make_input_vec();
+    let mut spectrum = fft.make_output_vec();
+    let mut scratch = fft.make_scratch_vec();
+    let hann: Vec<f32> = (0..FFT_SIZE)
+        .map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / FFT_SIZE as f32).cos())
+        .collect();
+    let bin_hz = sr as f32 / FFT_SIZE as f32;
+    let top = 16000.0f32.min(sr as f32 / 2.0);
+    let lo_hz = 40.0f32;
+    let ratio = (top / lo_hz).powf(1.0 / bands as f32);
+    // Per band: bin range (at least one bin; narrow low bands share the nearest bin) + tilt dB.
+    let edges: Vec<(usize, usize, f32)> = (0..bands)
+        .map(|b| {
+            let f0 = lo_hz * ratio.powi(b as i32);
+            let f1 = f0 * ratio;
+            let a = (f0 / bin_hz).floor() as usize;
+            let z = ((f1 / bin_hz).ceil() as usize).max(a + 1).min(FFT_SIZE / 2 + 1);
+            let a = a.min(z - 1);
+            let center = (f0 * f1).sqrt();
+            (a, z, 3.0 * (center / 1000.0).log2())
+        })
+        .collect();
+    let half = (FFT_SIZE / 2) as i64;
+    let len = mono.len() as i64;
+    let mut peak = 0.0f32;
+    for i in 0..n_frames {
+        let start = (i as f64 * sr as f64 / rate as f64).round() as i64 - half;
+        for k in 0..FFT_SIZE {
+            let idx = start + k as i64;
+            let s = if idx >= 0 && idx < len { mono[idx as usize] } else { 0.0 };
+            input[k] = s * hann[k];
+        }
+        fft.process_with_scratch(&mut input, &mut spectrum, &mut scratch).expect("fft size mismatch");
+        for (b, &(a, z, tilt)) in edges.iter().enumerate() {
+            let mut m = 0.0f32;
+            for c in &spectrum[a..z] {
+                m = m.max((c.re * c.re + c.im * c.im).sqrt());
+            }
+            peak = peak.max(m);
+            // store magnitude with tilt applied as linear gain for now
+            out[i * bands + b] = m * 10f32.powf(tilt / 20.0);
+        }
+    }
+    if peak < 1e-6 {
+        out.iter_mut().for_each(|v| *v = 0.0);
+        return out;
+    }
+    // dB, relative to the loudest raw magnitude so silence floors are stable.
+    let ref_mag = peak;
+    let mut db: Vec<f32> = out.iter().map(|&m| 20.0 * (m / ref_mag).max(1e-9).log10()).collect();
+    let mut sorted = db.clone();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let pick = |q: f64| sorted[((sorted.len() - 1) as f64 * q).round() as usize];
+    let (floor, ceil) = (pick(0.05), pick(0.99));
+    if ceil - floor < 1e-3 {
+        out.iter_mut().for_each(|v| *v = 0.0);
+        return out;
+    }
+    for (o, d) in out.iter_mut().zip(db.drain(..)) {
+        *o = ((d - floor) / (ceil - floor)).clamp(0.0, 1.0);
+    }
+    out
+}
+
 /// Positive spectral flux with an adaptive threshold: subtract a centered
 /// moving mean (±0.1 s) scaled by 1.5, floor at zero. Offline, so non-causal.
 fn adaptive_threshold(flux: &[f32], rate: u32) -> Vec<f32> {
@@ -237,6 +312,29 @@ mod tests {
         (0..(SR as f32 * secs) as usize)
             .map(|i| (i as f32 * freq * std::f32::consts::TAU / SR as f32).sin() * amp)
             .collect()
+    }
+
+    #[test]
+    fn spectrum_sine_energy_in_right_band_and_bounds() {
+        let bands = 32;
+        let sig = sine(1000.0, 1.0, 0.5);
+        let sp = band_spectrum(&sig, SR, 200, bands);
+        assert_eq!(sp.len(), 200 * bands);
+        assert!(sp.iter().all(|v| (0.0..=1.0).contains(v)));
+        let ratio = (16000.0f32 / 40.0).powf(1.0 / bands as f32);
+        let expect = ((1000.0f32 / 40.0).ln() / ratio.ln()).floor() as usize;
+        let row = &sp[100 * bands..101 * bands];
+        let argmax = row.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).unwrap().0;
+        assert!(argmax.abs_diff(expect) <= 1, "argmax {argmax} expect {expect}");
+        assert!(row[argmax] > 0.9);
+        assert!(row[0] < 0.5 && row[bands - 1] < 0.5);
+    }
+
+    #[test]
+    fn spectrum_silent_is_zero_and_sized() {
+        let sp = band_spectrum(&vec![0.0; SR as usize], SR, 100, 16);
+        assert_eq!(sp.len(), 100 * 16);
+        assert!(sp.iter().all(|v| *v == 0.0));
     }
 
     #[test]

@@ -11,6 +11,8 @@ struct Source {
     /// Normalized (P95) feature series on the analysis grid.
     features: Vec<Vec<f32>>,
     silent: [bool; N_FEATURES],
+    /// Mono analysis signal, kept for on-demand band spectra.
+    mono: Vec<f32>,
 }
 
 pub struct Core {
@@ -23,6 +25,7 @@ pub struct Core {
     load_warnings: Vec<Issue>,
     router: Router,
     output: Vec<f32>,
+    spectra: std::collections::HashMap<(String, usize), Vec<f32>>,
 }
 
 impl Core {
@@ -41,6 +44,7 @@ impl Core {
             load_warnings: Vec::new(),
             router: Router::default(),
             output: Vec::new(),
+            spectra: std::collections::HashMap::new(),
         })
     }
 
@@ -107,7 +111,8 @@ impl Core {
             silent[i] = features::normalize_p95(&mut s, i == features::F_ONSET);
             feats.push(s);
         }
-        self.sources.push(Source { id: id.clone(), features: feats, silent });
+        self.spectra.retain(|(sid, _), _| sid != &id);
+        self.sources.push(Source { id: id.clone(), features: feats, silent, mono });
         Ok(Some(id))
     }
 
@@ -189,9 +194,26 @@ impl Core {
         n
     }
 
+    /// Band spectrum for a source (frame-major, normalized 0..1), cached.
+    pub fn spectrum(&mut self, id: &str, bands: usize) -> Option<Vec<f32>> {
+        let key = (id.to_string(), bands);
+        if let Some(v) = self.spectra.get(&key) {
+            return Some(v.clone());
+        }
+        let src = self.sources.iter().find(|s| s.id == id)?;
+        let v = features::band_spectrum(&src.mono, self.sample_rate, self.analysis_rate, bands);
+        self.spectra.insert(key, v.clone());
+        Some(v)
+    }
+
     /// Normalized feature series (analysis grid) for a source.
     pub fn feature_series(&self, id: &str, feature: usize) -> Option<&[f32]> {
         self.sources.iter().find(|s| s.id == id).and_then(|s| s.features.get(feature)).map(|v| v.as_slice())
+    }
+
+    /// Mono analysis signal of a source (for waveform visuals).
+    pub fn source_mono(&self, id: &str) -> Option<&[f32]> {
+        self.sources.iter().find(|s| s.id == id).map(|s| s.mono.as_slice())
     }
 
     pub fn analysis_rate(&self) -> u32 {
@@ -381,6 +403,18 @@ mod tests {
         assert!((c.output()[0] - 0.8).abs() < 1e-6);
         p.elements.push(p.elements[0].clone());
         assert!(c.update_base(&p).is_err());
+    }
+
+    #[test]
+    fn spectrum_cached_sized_and_unknown_none() {
+        let clicks = click_track(2.0, 1.0);
+        let p = project("");
+        let mut c = build(&p, &clicks, &clicks);
+        let a = c.spectrum("drums", 24).unwrap();
+        assert_eq!(a.len(), 400 * 24);
+        assert_eq!(a, c.spectrum("drums", 24).unwrap());
+        assert!(a.iter().all(|v| (0.0..=1.0).contains(v)));
+        assert!(c.spectrum("nope", 24).is_none());
     }
 
     #[test]

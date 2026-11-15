@@ -9,6 +9,10 @@
 // `plan` comes from animation.buildPlan().
 
 import { P, defaultFit, fitSize } from './animation.js';
+import { visSettings, visAmplitudes, buildVisual, hexToRgb, adjustRgb } from './visualizer.js';
+import { fxSettings, FX_KINDS, hexToRgb as fxRgb, PARTICLE_VERT, PARTICLE_FRAG, FIRE_VERT, FIRE_FRAG } from './effects.js';
+import { lyricsSettings, activeLines, lineEnd, highlightFraction, placeLine } from './lyrics.js';
+import { ensureFont, measureLine, drawLine } from './textcanvas.js';
 
 const VERT = `#version 300 es
 in vec2 aQ;
@@ -82,6 +86,30 @@ uniform sampler2D uTex;
 uniform float uOpacity;
 out vec4 o;
 void main() { o = texture(uTex, vUV) * uOpacity; }`;
+
+const VIS_VERT = `#version 300 es
+layout(location = 0) in vec2 aP;
+layout(location = 1) in vec4 aC;
+uniform vec2 uCanvas;
+uniform vec2 uPos;
+uniform vec2 uScale;
+uniform float uRot;
+uniform vec2 uMirror;
+out vec4 vC;
+void main() {
+  vec2 l = aP * uMirror * uScale;
+  float c = cos(uRot), s = sin(uRot);
+  vec2 p = vec2(c * l.x - s * l.y, s * l.x + c * l.y) + uPos;
+  vC = aC;
+  gl_Position = vec4(p.x / uCanvas.x * 2.0 - 1.0, 1.0 - p.y / uCanvas.y * 2.0, 0.0, 1.0);
+}`;
+
+const VIS_FRAG = `#version 300 es
+precision highp float;
+in vec4 vC;
+uniform float uOpacity;
+out vec4 o;
+void main() { float a = vC.a * uOpacity; o = vec4(vC.rgb * a, a); }`;
 
 function compile(gl, type, src) {
   const s = gl.createShader(type);
@@ -167,6 +195,12 @@ export class Renderer {
     ]);
     this.kawase = program(gl, FS_VERT, KAWASE_FRAG, ['uTex', 'uTexel', 'uOffset']);
     this.comp = program(gl, FS_VERT, COMPOSITE_FRAG, ['uTex', 'uOpacity']);
+    this.visProg = program(gl, VIS_VERT, VIS_FRAG, ['uCanvas', 'uPos', 'uScale', 'uRot', 'uMirror', 'uOpacity']);
+    this.fxProg = program(gl, PARTICLE_VERT, PARTICLE_FRAG, [
+      'uCanvas', 'uCenter', 'uArea', 'uTime', 'uKind', 'uCount', 'uDensity', 'uSize', 'uSpeed', 'uWind',
+      'uSeed', 'uC1', 'uC2', 'uRot', 'uPixel', 'uOpacity', 'uGlow']);
+    this.fireProg = program(gl, FIRE_VERT, FIRE_FRAG, [
+      'uCanvas', 'uCenter', 'uArea', 'uRot', 'uTime', 'uCell', 'uSpeed', 'uWind', 'uSeed', 'uC1', 'uC2', 'uOpacity']);
 
     // Unit quad as a triangle strip.
     this.vao = gl.createVertexArray();
@@ -177,6 +211,21 @@ export class Renderer {
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
+    // dynamic geometry for visualizers
+    this.visVao = gl.createVertexArray();
+    gl.bindVertexArray(this.visVao);
+    this.visBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.visBuf);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 24, 0);
+    gl.enableVertexAttribArray(1);
+    gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 24, 8);
+    gl.bindVertexArray(this.vao);
+
+    this.audio = null;        // { fps, spectrum(src, bands), pcm(src) } supplied by the app
+    this.avoid = [];          // normalised rects lyrics should keep clear of
+    this.textTex = new Map(); // text raster cache (LRU by insertion order)
+    this.textMeasure = new Map();
     this.textures = new TextureCache(gl, budgetMB * 1024 * 1024);
     this.fboTiers = new Map(); // scale -> { w, h, a:{fbo,tex}, b:{fbo,tex} }
     this.nearest = new Set(); // asset ids sampled with NEAREST
@@ -232,6 +281,8 @@ export class Renderer {
   /** Ensure every texture needed by `plan` is on the GPU. Async only on a cache miss. */
   async prepare(plan) {
     const pinned = new Set();
+    for (const it of plan) if (it.kind === 'lyrics') await this._prepareLyrics(it);
+    plan = plan.filter((it) => it.kind === 'image');
     for (const it of plan) {
       pinned.add(Renderer.key(it.asset, it.asset.textureIndex(it.frameA)));
       if (it.frameB != null) pinned.add(Renderer.key(it.asset, it.asset.textureIndex(it.frameB)));
@@ -293,9 +344,19 @@ export class Renderer {
       if (blur > 0.25) this._drawBlurred(it, blur);
       else {
         this._setBlend(it.visualBlend);
-        this._drawElement(it, 1);
+        this._drawLayer(it);
       }
     }
+  }
+
+  _drawLayer(it) {
+    switch (it.kind) {
+      case 'visualizer': this._drawVisualizer(it); break;
+      case 'effect': this._drawEffect(it); break;
+      case 'lyrics': this._drawLyrics(it); break;
+      default: this._drawElement(it, 1);
+    }
+    this.gl.bindVertexArray(this.vao);
   }
 
   _setBlend(mode) {
@@ -355,7 +416,7 @@ export class Renderer {
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     const saved = it.props[P.opacity];
     it.props[P.opacity] = 1;
-    this._drawElement(it, 1);
+    this._drawLayer(it);
     it.props[P.opacity] = saved;
 
     // 2. Kawase ping-pong.
@@ -388,7 +449,202 @@ export class Renderer {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
+  // ---------- generated layers ----------
+
+  _drawVisualizer(it) {
+    const gl = this.gl;
+    const { props, asset } = it;
+    const vis = visSettings(asset.def);
+    const fps = this.audio?.fps ?? 30;
+    const amps = visAmplitudes(vis, {
+      spec: this.audio?.spectrum(vis.source, vis.bands) ?? null,
+      pcm: this.audio?.pcm(vis.source) ?? null,
+      fps, frame: it.frame,
+    });
+    const adj = (hex) => adjustRgb(hexToRgb(hex), props[P.hueShift], props[P.saturation], props[P.brightness], props[P.contrast]);
+    const geo = buildVisual(vis, amps, {
+      minDim: Math.min(this.width, this.height), time: it.time,
+      colors: [adj(vis.color1), adj(vis.color2)], intensity: props[P.intensity],
+    });
+    if (!geo.vertexCount) return;
+    const inter = new Float32Array(geo.vertexCount * 6);
+    for (let i = 0; i < geo.vertexCount; i++) {
+      inter[i * 6] = geo.pos[i * 2]; inter[i * 6 + 1] = geo.pos[i * 2 + 1];
+      inter.set(geo.col.subarray(i * 4, i * 4 + 4), i * 6 + 2);
+    }
+    const { p, u } = this.visProg;
+    gl.useProgram(p);
+    gl.uniform2f(u.uCanvas, this.width, this.height);
+    gl.uniform2f(u.uPos, props[P.positionX] * this.width, props[P.positionY] * this.height);
+    const sc = props[P.scale];
+    gl.uniform2f(u.uScale, sc * props[P.scaleX], sc * props[P.scaleY]);
+    gl.uniform1f(u.uRot, props[P.rotation]);
+    gl.uniform2f(u.uMirror, props[P.mirrorX] >= 0.5 ? -1 : 1, props[P.mirrorY] >= 0.5 ? -1 : 1);
+    gl.uniform1f(u.uOpacity, props[P.opacity]);
+    gl.bindVertexArray(this.visVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.visBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, inter, gl.DYNAMIC_DRAW);
+    gl.drawArrays(gl.TRIANGLES, 0, geo.vertexCount);
+  }
+
+  _drawEffect(it) {
+    const gl = this.gl;
+    const { props, asset } = it;
+    const fx = fxSettings(asset.def);
+    const kind = FX_KINDS[fx.kind];
+    const minDim = Math.min(this.width, this.height);
+    const sc = props[P.scale];
+    const area = [fx.area[0] * this.width * sc * props[P.scaleX], fx.area[1] * this.height * sc * props[P.scaleY]];
+    const adj = (hex) => adjustRgb(fxRgb(hex), props[P.hueShift], props[P.saturation], props[P.brightness], props[P.contrast]);
+    const c1 = adj(fx.c1); const c2 = adj(fx.c2);
+    const pixelPx = fx.pixel > 0 || fx.kind === 'pixelFire' ? Math.max(1, Math.round((fx.pixel || fx.size) * (minDim / 1080))) : 0;
+    const t = pixelPx > 0 ? Math.floor(it.time * fx.fps) / fx.fps : it.time;
+    const sizePx = fx.size * (minDim / 1080);
+    const cx = props[P.positionX] * this.width; const cy = props[P.positionY] * this.height;
+    const density = Math.min(1, props[P.intensity]);
+    const glow = Math.max(1, props[P.intensity]);
+    if (fx.kind === 'pixelFire') {
+      const { p, u } = this.fireProg;
+      gl.useProgram(p);
+      gl.uniform2f(u.uCanvas, this.width, this.height);
+      gl.uniform2f(u.uCenter, cx, cy);
+      gl.uniform2f(u.uArea, area[0], area[1]);
+      gl.uniform1f(u.uRot, props[P.rotation]);
+      gl.uniform1f(u.uTime, t);
+      gl.uniform1f(u.uCell, pixelPx);
+      gl.uniform1f(u.uSpeed, fx.speed);
+      gl.uniform1f(u.uWind, fx.wind);
+      gl.uniform1ui(u.uSeed, fx.seed >>> 0);
+      gl.uniform3fv(u.uC1, c1); gl.uniform3fv(u.uC2, c2);
+      gl.uniform1f(u.uOpacity, props[P.opacity]);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      return;
+    }
+    const { p, u } = this.fxProg;
+    gl.useProgram(p);
+    gl.uniform2f(u.uCanvas, this.width, this.height);
+    gl.uniform2f(u.uCenter, cx, cy);
+    gl.uniform2f(u.uArea, area[0], area[1]);
+    gl.uniform1f(u.uTime, t);
+    gl.uniform1i(u.uKind, kind.id);
+    gl.uniform1i(u.uCount, fx.count);
+    gl.uniform1f(u.uDensity, density);
+    gl.uniform1f(u.uSize, sizePx);
+    gl.uniform1f(u.uSpeed, fx.speed);
+    gl.uniform1f(u.uWind, fx.wind);
+    gl.uniform1ui(u.uSeed, fx.seed >>> 0);
+    gl.uniform3fv(u.uC1, c1); gl.uniform3fv(u.uC2, c2);
+    gl.uniform1f(u.uRot, props[P.rotation]);
+    gl.uniform1f(u.uPixel, pixelPx);
+    gl.uniform1f(u.uOpacity, props[P.opacity]);
+    gl.uniform1f(u.uGlow, glow);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, fx.count);
+  }
+
+  // ---------- lyrics ----------
+
+  _textKey(def, lyr, i, hi) {
+    const s = lyr.style;
+    return `${def.id}|${i}|${this.height}|${this.width}|${hi ? 1 : 0}|${lyr.lines[i].text}|${s.font}|${s.size}|${s.weight}|${s.italic}|${s.color}|${s.hiColor}|${s.outline}|${s.outlineColor}|${s.shadow}|${s.align}|${s.maxWidth}`;
+  }
+
+  _uploadText(key, canvas) {
+    const gl = this.gl;
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this.textTex.set(key, { tex, w: canvas.width, h: canvas.height });
+    while (this.textTex.size > 96) {
+      const [k, e] = this.textTex.entries().next().value;
+      gl.deleteTexture(e.tex); this.textTex.delete(k);
+    }
+  }
+
+  async _prepareLyrics(it) {
+    const def = it.asset.def;
+    const lyr = lyricsSettings(def);
+    await ensureFont(lyr.style, this.height);
+    const active = activeLines(lyr, it.time);
+    for (const a of active) {
+      for (const hi of lyr.style.karaoke !== 'off' ? [false, true] : [false]) {
+        const key = this._textKey(def, lyr, a.i, hi);
+        if (this.textTex.has(key)) { const e = this.textTex.get(key); this.textTex.delete(key); this.textTex.set(key, e); continue; }
+        const mkey = key.replace('|1|', '|0|');
+        let m = this.textMeasure.get(mkey);
+        if (!m) {
+          m = measureLine(lyr.lines[a.i].text, lyr.style, this.height, this.width);
+          this.textMeasure.set(mkey, m);
+          if (this.textMeasure.size > 400) this.textMeasure.delete(this.textMeasure.keys().next().value);
+        }
+        this._uploadText(key, drawLine(m, lyr.style, hi));
+      }
+    }
+    it.lyr = { lyr, active };
+  }
+
+  _drawLyrics(it) {
+    if (!it.lyr) return;
+    const { props, asset } = it;
+    const def = asset.def;
+    const { lyr, active } = it.lyr;
+    const W = this.width; const H = this.height;
+    const sc = props[P.scale] * props[P.scaleX];
+    for (const a of active) {
+      const base = this.textTex.get(this._textKey(def, lyr, a.i, false));
+      if (!base) continue;
+      const place = placeLine(lyr.layout, a.i, { w: base.w / W, h: base.h / H }, this.avoid);
+      const pos = a.line.pos ?? place;
+      const cx = (pos.x + (props[P.positionX] - 0.5)) * W + a.dx * base.h;
+      const cy = (pos.y + (props[P.positionY] - 0.5)) * H + a.dy * base.h * 0.6;
+      const rot = props[P.rotation] + ((place.tilt ?? 0) * Math.PI) / 180;
+      const w = base.w * sc * a.scale; const h = base.h * props[P.scale] * props[P.scaleY] * a.scale;
+      const op = props[P.opacity] * a.alpha;
+      const end = lineEnd(lyr.lines, a.i);
+      const fill = highlightFraction(a.line, it.time, end, lyr.style.karaoke);
+      this._quad(base.tex, 1, a.reveal, cx, cy, w, h, rot, props, op);
+      if (fill > 0 && lyr.style.karaoke !== 'off') {
+        const hi = this.textTex.get(this._textKey(def, lyr, a.i, true));
+        if (hi) this._quad(hi.tex, 1, Math.min(fill, a.reveal), cx, cy, w, h, rot, props, op);
+      }
+    }
+  }
+
+  /** Draw a texture clipped to its left `frac` fraction, centred on (cx, cy) before clipping. */
+  _quad(tex, _unused, frac, cx, cy, w, h, rot, props, opacity) {
+    if (frac <= 0) return;
+    const gl = this.gl;
+    const u = this.elem.u;
+    const c = Math.cos(rot); const s = Math.sin(rot);
+    const off = -(w * (1 - frac)) / 2;
+    gl.useProgram(this.elem.p);
+    gl.uniform2f(u.uCanvas, this.width, this.height);
+    gl.uniform2f(u.uPos, cx + c * off, cy + s * off);
+    gl.uniform2f(u.uSize, w * frac, h);
+    gl.uniform1f(u.uRot, rot);
+    gl.uniform2f(u.uAnchor, 0.5, 0.5);
+    gl.uniform2f(u.uMirror, 1, 1);
+    gl.uniform4f(u.uRect, 0, 0, frac, 1);
+    gl.uniform1f(u.uHue, (props[P.hueShift] * Math.PI) / 180);
+    gl.uniform1f(u.uSat, props[P.saturation]);
+    gl.uniform1f(u.uBri, props[P.brightness]);
+    gl.uniform1f(u.uCon, props[P.contrast]);
+    gl.uniform1f(u.uOpacity, opacity);
+    gl.uniform1i(u.uTex, 0);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+
   dispose() {
+    for (const e of this.textTex.values()) this.gl.deleteTexture(e.tex);
+    this.textTex.clear();
     this.textures.clear();
     this._freeFbos();
   }

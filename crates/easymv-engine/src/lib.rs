@@ -136,6 +136,21 @@ impl Engine {
             .unwrap_or_default()
     }
 
+    /// Band spectrum, frame-major `[frame * bands + band]`, 0..1, analysis grid.
+    /// `bands` is clamped to 8..=256. Empty for an unknown source.
+    pub fn spectrum_series(&mut self, source_id: &str, bands: u32) -> Vec<f32> {
+        self.core.spectrum(source_id, bands.clamp(8, 256) as usize).unwrap_or_default()
+    }
+
+    /// Pointer / length of a source's mono signal (f32 samples at the project sample rate).
+    /// Valid until the engine is dropped or memory is reallocated by loading more audio.
+    pub fn source_mono_ptr(&self, source_id: &str) -> *const f32 {
+        self.core.source_mono(source_id).map_or(std::ptr::null(), |m| m.as_ptr())
+    }
+    pub fn source_mono_len(&self, source_id: &str) -> usize {
+        self.core.source_mono(source_id).map_or(0, |m| m.len())
+    }
+
     pub fn total_frames(&self) -> u32 {
         self.core.total_frames() as u32
     }

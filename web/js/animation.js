@@ -4,12 +4,13 @@
 // parameters). Audio never reaches this module: stable-pace animation by
 // construction.
 
-export const PROPERTY_COUNT = 16;
+export const PROPERTY_COUNT = 18;
 
 /** Order is the engine contract (§5.3). Verified against the engine at startup. */
 export const PROPERTY_NAMES = [
   'positionX', 'positionY', 'rotation', 'scale', 'scaleX', 'scaleY', 'mirrorX', 'mirrorY',
   'opacity', 'hueShift', 'saturation', 'brightness', 'contrast', 'blur', 'anchorX', 'anchorY',
+  'visible', 'intensity',
 ];
 export const P = Object.fromEntries(PROPERTY_NAMES.map((n, i) => [n, i]));
 
@@ -174,10 +175,22 @@ export function defaultFit(def) {
   return def.fit ?? (def.type === 'static' ? 'cover' : 'natural');
 }
 
+/** Layer kinds. Image-like layers have textures from files; generated layers are drawn procedurally. */
+export const IMAGE_TYPES = ['static', 'spriteSheet', 'gif', 'frameSequence'];
+export const GENERATED_TYPES = ['visualizer', 'effect', 'lyrics'];
+export const isImageType = (t) => IMAGE_TYPES.includes(t);
+export const isGeneratedType = (t) => GENERATED_TYPES.includes(t);
+
 /**
- * Build the per-frame draw plan: which texture(s) each element needs plus its
+ * Build the per-frame draw plan: which texture(s) each layer needs plus its
  * routed property values. Step 1 (internal frame) and step 2 (routed values)
  * of §4.2 are computed independently here and only combined for drawing.
+ *
+ * Culling (v0.5): a layer whose `visible` is below 0.5, or whose opacity is ~0, never
+ * enters the plan, so nothing is decoded, uploaded or drawn for it. This can never change
+ * the picture (an invisible layer draws nothing).
+ *
+ * Paint order is array order: index 0 is the back, the last layer is the front.
  *
  * @param assets   array parallel to project.elements (index == engine element idx)
  * @param frameView object with get(elementIdx, propIdx)
@@ -189,23 +202,29 @@ export function buildPlan(assets, frameView, frameIndex, videoFps) {
     if (!a || !a.ready) continue;
     const def = a.def;
 
-    // Step 1: internal timeline (never reads audio).
-    let r;
-    if (def.type === 'gif') r = resolveGifFrame(frameIndex, videoFps, a.timeline, def.loopMode ?? 'loop');
-    else if (def.type === 'static') r = { frame: 0, next: 0, mix: 0 };
-    else {
-      r = resolveFixedRateFrame(frameIndex, videoFps, def.internalFps, a.frameCount, def.loopMode ?? 'loop');
-      if (!def.interpolate) r.mix = 0;
-    }
-
-    // Step 2: routed values, read as a view (no copy).
+    // Routed values, read as a view (no copy).
+    if (frameView.get(ei, P.visible) < 0.5) continue; // culled: hidden by keyframe or base
+    if (frameView.get(ei, P.opacity) <= 0.001) continue; // culled: fully transparent
     const props = new Float32Array(PROPERTY_COUNT);
     for (let p = 0; p < PROPERTY_COUNT; p++) props[p] = frameView.get(ei, p);
 
+    const kind = isGeneratedType(def.type) ? def.type : 'image';
+    let r = { frame: 0, next: 0, mix: 0 };
+    if (kind === 'image') {
+      // Step 1: internal timeline (never reads audio).
+      if (def.type === 'gif') r = resolveGifFrame(frameIndex, videoFps, a.timeline, def.loopMode ?? 'loop');
+      else if (def.type !== 'static') {
+        r = resolveFixedRateFrame(frameIndex, videoFps, def.internalFps, a.frameCount, def.loopMode ?? 'loop');
+        if (!def.interpolate) r.mix = 0;
+      }
+    }
+
     items.push({
+      kind,
       asset: a,
-      zIndex: def.zIndex ?? 0,
       order: ei,
+      frame: frameIndex,
+      time: frameIndex / videoFps,
       frameA: r.frame,
       frameB: r.mix > 0 ? r.next : null,
       mix: r.mix,
@@ -213,7 +232,5 @@ export function buildPlan(assets, frameView, frameIndex, videoFps) {
       visualBlend: def.visualBlend ?? 'normal',
     });
   }
-  // Painter's algorithm: ascending z, ties by array order.
-  items.sort((x, y) => x.zIndex - y.zIndex || x.order - y.order);
-  return items;
+  return items; // already back-to-front
 }

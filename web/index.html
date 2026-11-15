@@ -1,113 +1,16 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#141218">
 <title>EasyMV</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header>
-  <h1>EasyMV</h1><span class="sub">automatic music videos, in your browser</span>
-  <span class="spacer"></span>
-  <button id="undo" disabled title="Undo (Ctrl+Z)">↶ Undo</button>
-  <button id="redo" disabled title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
-</header>
-<div id="fatal" class="banner err" hidden></div>
-<div id="toast" class="toast" hidden></div>
-<main>
-  <section id="left">
-    <div class="panel">
-      <h2>1 · Audio</h2>
-      <label class="row">Master mix (exported soundtrack)
-        <input type="file" id="master" accept="audio/*,.flac"></label>
-      <label class="row">Stems (control signals only, never exported)
-        <input type="file" id="stems" accept="audio/*,.flac" multiple></label>
-      <ul id="stemList" class="plain"></ul>
-      <div class="grid2">
-        <label>Resolution <select id="res">
-          <option value="1280x720" selected>1280×720 (HD)</option>
-          <option value="1920x1080">1920×1080 (Full HD)</option>
-          <option value="720x1280">720×1280 (vertical)</option>
-          <option value="1080x1920">1080×1920 (vertical FHD)</option>
-          <option value="1080x1080">1080×1080 (square)</option>
-          <option value="custom">Custom…</option></select></label>
-        <label>Video fps <select id="fps"><option>24</option><option selected>30</option><option>48</option><option>60</option></select></label>
-        <label>Width <input type="number" id="w" value="1280" min="2" step="2"></label>
-        <label>Height <input type="number" id="h" value="720" min="2" step="2"></label>
-        <label>Sample rate <select id="sr"><option value="44100" selected>44,100 Hz</option><option value="48000">48,000 Hz (video)</option></select></label>
-        <label>Analysis rate <select id="ar"><option value="100">100 Hz</option><option value="200" selected>200 Hz</option></select></label>
-        <label>GPU budget (MB) <input type="number" id="budget" value="512" min="64" step="64"></label>
-      </div>
-      <div class="bar">
-        <button id="analyze" disabled>Analyze audio</button>
-        <button id="quick" disabled title="Adds demo visuals if you have none, analyzes, applies Automatic mode">⚡ Quick start</button>
-      </div>
-      <progress id="analyzeProg" max="1" value="0" hidden></progress>
-    </div>
-    <div class="panel" id="signalsPanel" hidden>
-      <h2>Signals <span class="muted">— click a wave to jump there</span></h2>
-      <div id="signals"></div>
-    </div>
-    <div class="panel">
-      <h2>2 · Elements</h2>
-      <label class="row">Add image, sprite sheet, GIF, or frame-sequence .zip
-        <input type="file" id="addEl" accept="image/*,.zip" multiple></label>
-      <div class="bar"><button id="demo">+ Demo visuals</button></div>
-      <div class="muted">Tip: click an element in the preview to select it, drag to move, wheel/pinch to resize.</div>
-      <div id="elements"></div>
-      <div id="gpu" class="muted"></div>
-    </div>
-  </section>
-  <section id="mid">
-    <div class="panel">
-      <div class="stage" id="stage">
-        <canvas id="view" width="1280" height="720"></canvas>
-        <svg id="sel" preserveAspectRatio="none" aria-hidden="true"></svg>
-      </div>
-      <div class="transport">
-        <button id="play" disabled>▶</button>
-        <input type="range" id="scrub" min="0" max="0" value="0" disabled>
-        <span id="time" class="muted">0:00 / 0:00</span>
-      </div>
-    </div>
-    <div class="panel">
-      <h2>4 · Export</h2>
-      <div id="codec" class="muted"></div>
-      <button id="export" disabled>Export video</button>
-      <button id="cancel" hidden>Cancel</button>
-      <progress id="exportProg" max="1" value="0" hidden></progress>
-      <div id="exportMsg" class="muted"></div>
-    </div>
-  </section>
-  <section id="right">
-    <div class="panel">
-      <h2>3 · Routing</h2>
-      <div class="bar">
-        <button id="auto" disabled>Automatic mode</button>
-        <button id="addConn" disabled>+ Connection</button>
-      </div>
-      <div class="bar">
-        <select id="presetSel"></select>
-        <button id="presetApply" disabled>Add preset</button>
-      </div>
-      <div class="bar">
-        <button id="saveBundle">Save bundle (.zip)</button>
-        <button id="saveProj">Project JSON</button>
-        <label class="btn">Open…<input type="file" id="loadProj" accept=".json,.zip" hidden></label>
-      </div>
-      <div id="issues"></div>
-      <div id="conns"></div>
-    </div>
-  </section>
-</main>
-<dialog id="reorder">
-  <h2>Reorder frames</h2>
-  <p class="muted">Drag tiles, or use the arrows. Frames play in this order.</p>
-  <div id="reorderGrid"></div>
-  <div class="bar"><button id="reorderReset">Natural order</button><span class="spacer"></span>
-    <button id="reorderCancel">Cancel</button><button id="reorderApply">Apply</button></div>
-</dialog>
+<div id="app"></div>
+<div id="boot" class="boot">Loading EasyMV…</div>
+<noscript>EasyMV needs JavaScript.</noscript>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>
