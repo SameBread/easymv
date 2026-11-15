@@ -22,7 +22,7 @@ jobs:
         run: npm run test:js
       - name: Build site (WASM + static assets)
         run: npm run build
-      - name: Check WASM size (< 2 MB target)
+      - name: Check WASM size (< 2 MB target, §12)
         run: |
           size=$(stat -c%s dist/pkg/easymv_engine_bg.wasm); echo "wasm bytes: $size"
           [ "$size" -lt 2097152 ] || echo "::warning::WASM exceeds the 2 MB target ($size bytes)"
