@@ -87,7 +87,7 @@ export function numField({ label, value, min = -Infinity, max = Infinity, step =
 }
 
 export function selectField({ label, value, options, onChange, title }) {
-  const sel = h('select.sel', { 'aria-label': label, title });
+  const sel = h('select.fld-select', { 'aria-label': label, title });
   for (const o of options) {
     const [v, text] = Array.isArray(o) ? o : [o, o];
     sel.add(new Option(text, v, false, v === value));

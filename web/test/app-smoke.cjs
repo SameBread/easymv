@@ -46,6 +46,11 @@ const srv = http.createServer((q, s) => {
     const px = await E(() => { easymv.core.state.renderer && 0; const v = easymv.core.state.canvas; const c = document.createElement('canvas'); c.width = v.width; c.height = v.height; const g = c.getContext('2d'); g.drawImage(v, 0, 0); return Array.from(g.getImageData(10, 10, 1, 1).data); });
     check('preview renders the demo background', px[0] + px[1] + px[2] > 20, JSON.stringify(px));
 
+    check('selection overlay does not cover the preview', await E(() => { const svg = document.querySelector('.stage svg'); const cs = getComputedStyle(svg); return cs.backgroundColor === 'rgba(0, 0, 0, 0)' && cs.pointerEvents === 'none'; }));
+    await E(() => easymv.core.seek(1)); await pg.waitForTimeout(800);
+    const box = await pg.locator('.stage').boundingBox(); const shot = await pg.screenshot({ clip: box }); fs.writeFileSync('/tmp/shot.png', shot);
+    check('preview is visibly painted (centre differs from the corner)', await E(async (b64) => { const img = await createImageBitmap(await (await fetch('data:image/png;base64,' + b64)).blob()); const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; const g = c.getContext('2d'); g.drawImage(img, 0, 0); const d = g.getImageData(0, 0, img.width, img.height).data; const a = [d[0], d[1], d[2]]; const m = ((img.height >> 1) * img.width + (img.width >> 1)) * 4; const b = [d[m], d[m + 1], d[m + 2]]; return Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]) > 10; }, shot.toString('base64')));
+
     // Add a visualizer from the Layer menu
     await menu('Layer', 'New layer');
     await pg.click('.submenu .menu-item:has(.mi-label:text-is("Visualizer"))');

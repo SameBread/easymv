@@ -897,16 +897,34 @@ export async function rebuildRenderer() {
 
 export function attachCanvas(canvas) { state.canvas = canvas; }
 
+/** Without a song there is no engine: show layers at their own values (base plus timeline) so you can still compose. */
+function baseOnlyView(f) {
+  const els = state.project.elements;
+  return { get: (e, q) => {
+    const id = els[e]?.id; const name = PROPERTY_NAMES[q];
+    const t = trackOf(id, name);
+    return t ? TL.valueAt(t, f) : baseValue(id, name);
+  } };
+}
+
 async function drawFrame(f) {
-  if (!state.bridge || !state.renderer) return;
-  state.bridge.evaluate(f, 1);
-  const fv = state.bridge.frameView.at(0);
-  const n = state.bridge.elementCount;
-  const vals = new Float32Array(n * PROPERTY_COUNT);
-  for (let e = 0; e < n; e++) for (let q = 0; q < PROPERTY_COUNT; q++) vals[e * PROPERTY_COUNT + q] = fv.get(e, q);
-  state.frameValues = vals;
+  if (!state.renderer) return;
+  let view;
+  if (state.bridge) {
+    state.bridge.evaluate(f, 1);
+    const fv = state.bridge.frameView.at(0);
+    const n = state.bridge.elementCount;
+    const vals = new Float32Array(n * PROPERTY_COUNT);
+    for (let e = 0; e < n; e++) for (let q = 0; q < PROPERTY_COUNT; q++) vals[e * PROPERTY_COUNT + q] = fv.get(e, q);
+    state.frameValues = vals;
+    view = state.bridge.frameView.at(0);
+  } else {
+    view = baseOnlyView(f);
+    const n = state.project.elements.length;
+    state.frameValues = Float32Array.from({ length: n * PROPERTY_COUNT }, (_, i) => view.get(Math.floor(i / PROPERTY_COUNT), i % PROPERTY_COUNT));
+  }
   state.renderer.audio = audioProvider();
-  const plan = buildPlan(state.assets, state.bridge.frameView.at(0), f, fps());
+  const plan = buildPlan(state.assets, view, f, fps());
   await state.renderer.prepare(plan);
   state.renderer.draw(plan);
   state.lastPlan = plan;

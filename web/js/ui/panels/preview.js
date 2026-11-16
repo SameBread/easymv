@@ -8,7 +8,7 @@ import { hitTest, itemQuad } from '../../interact.js';
 export function createPreviewPanel(shell) {
   const canvas = h('canvas.view', { width: 1280, height: 720, 'aria-label': 'Video preview' });
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('class', 'sel');
+  svg.setAttribute('class', 'sel-overlay');
   const stage = h('div.stage', canvas, svg);
   const frame = h('div.stage-wrap', stage);
   const empty = h('div.empty-state',

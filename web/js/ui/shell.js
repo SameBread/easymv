@@ -267,7 +267,7 @@ export function createShell(root, dv) {
   const undoBtn = iconBtn('undo', 'Undo (Ctrl+Z)', () => core.undo());
   const redoBtn = iconBtn('redo', 'Redo (Ctrl+Shift+Z)', () => core.redo());
   const exportBtn = h('button.btn.filled.sm.export-btn', { type: 'button', onclick: () => commands.export.run() }, icon('movie'), h('span', 'Export'));
-  const wsSelect = h('select.sel.ws-select', { 'aria-label': 'Workspace', onchange: (e) => loadWorkspace(e.target.value) });
+  const wsSelect = h('select.fld-select.ws-select', { 'aria-label': 'Workspace', onchange: (e) => loadWorkspace(e.target.value) });
   const topbar = h('header.topbar', hamburger, h('div.brand', h('span.logo', icon('graphic_eq')), h('span.brand-name', 'EasyMV')), menubar, h('span.grow'), wsSelect, undoBtn, redoBtn, exportBtn);
   const banner = h('div.banner.err', { hidden: true, role: 'alert' });
   const dockHost = h('div.dock-host');
