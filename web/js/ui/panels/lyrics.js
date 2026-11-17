@@ -3,8 +3,9 @@
 
 import * as core from '../../core.js';
 import { state, on, layerById, fmtTimeMs } from '../../core.js';
+import { fontField } from '../fontpicker.js';
 import { h, icon, clear, numField, selectField, colorField, toggle, rafThrottle } from '../dom.js';
-import { lyricsSettings, linesFromText, parseLrc, formatLrc, sortLines, tapStamp, tapWord, fmtStamp, LYRIC_FONTS, LAYOUT_MODES } from '../../lyrics.js';
+import { lyricsSettings, linesFromText, parseLrc, formatLrc, sortLines, tapStamp, tapWord, fmtStamp, LAYOUT_MODES } from '../../lyrics.js';
 
 export function createLyricsPanel(shell) {
   const element = h('div.panel-lyrics');
@@ -98,7 +99,6 @@ export function createLyricsPanel(shell) {
 
   function styleSection(def, lyr) {
     const s = lyr.style;
-    const fonts = [...LYRIC_FONTS, ...core.userFonts()];
     const fontIn = h('input', { type: 'file', accept: '.ttf,.otf,.woff,.woff2', hidden: true, onchange: async (e) => {
       const f = e.target.files[0]; e.target.value = ''; if (!f) return;
       const { name, path } = await core.addFontFile(f);
@@ -107,7 +107,7 @@ export function createLyricsPanel(shell) {
     const num = (label, path, o) => numField({ label, value: (path.split('.').reduce((a, k) => a[k], lyr)) * (o.mul ?? 1), min: o.min * (o.mul ?? 1), max: o.max * (o.mul ?? 1), step: o.step, suffix: o.suffix, onChange: (v) => set(def, path, label)(v / (o.mul ?? 1)) }).el;
     return section('Style', 'text_fields',
       h('div.fgrid',
-        selectField({ label: 'Font', value: s.font, options: fonts, onChange: (v) => core.setLyrics(def.id, (l) => { l.style.font = v; delete l.style.fontFile; }, 'Lyrics font') }).el,
+        fontField({ value: s.font, toast: core.toast, onLoadFile: () => fontIn.click(), onChange: (v) => core.setLyrics(def.id, (l) => { l.style.font = v; delete l.style.fontFile; }, 'Lyrics font') }).el,
         num('Size', 'style.size', { min: 0.02, max: 0.3, step: 0.005, mul: 100, suffix: '%' }),
         selectField({ label: 'Weight', value: String(s.weight), options: [['300', 'Light'], ['400', 'Regular'], ['600', 'Semi-bold'], ['700', 'Bold'], ['900', 'Black']], onChange: (v) => set(def, 'style.weight', 'weight')(Number(v)) }).el,
         selectField({ label: 'Align', value: s.align, options: ['left', 'center', 'right'], onChange: set(def, 'style.align', 'align') }).el,

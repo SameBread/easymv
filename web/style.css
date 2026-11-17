@@ -334,3 +334,10 @@ ol.reorder { list-style: none; padding: 0; margin: 0; max-height: 50vh; overflow
 .lsub { font-size: 11px; color: var(--md-on-surface-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .layer-row.selected .lsub { color: inherit; opacity: .8; }
 .badge.err { background: var(--md-error); color: #000; }
+.font-btn { display: flex; align-items: center; justify-content: space-between; gap: 6px; height: var(--row-h); padding: 0 8px; border: 0; border-radius: 6px; background: var(--md-surface-container-highest); color: var(--md-on-surface); cursor: pointer; font-size: 14px; min-width: 0; width: 100%; }
+.font-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.font-list { max-height: 52vh; overflow: auto; display: flex; flex-direction: column; }
+.font-group { position: sticky; top: 0; background: var(--md-surface-container-high); padding: 8px 4px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--md-on-surface-variant); }
+.font-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; border: 0; background: transparent; border-radius: 8px; cursor: pointer; min-height: var(--target); text-align: left; }
+.font-item:hover, .font-item.on { background: var(--md-primary-container); }
+.font-sample { font-size: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

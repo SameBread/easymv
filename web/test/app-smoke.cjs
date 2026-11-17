@@ -216,7 +216,7 @@ const srv = http.createServer((q, s) => {
     // Phone layout
     await pg.setViewportSize({ width: 390, height: 800 });
     await until(() => document.body.classList.contains('phone'));
-    check('phone mode shows bottom navigation', await pg.locator('.phone-nav').isVisible() && (await n('.phone-nav .nav-btn')) === 5);
+    check('phone mode shows bottom navigation', await pg.locator('.phone-nav').isVisible() && (await n('.phone-nav .nav-btn')) === 6);
     check('phone preview sits on top', await pg.locator('.phone-stage .panel-preview').isVisible());
     await pg.click('.phone-nav .nav-btn[data-id="timeline"]');
     check('one panel at a time', (await n('.phone-body .panel-timeline')) === 1 && (await n('.phone-body .panel-layers')) === 0);

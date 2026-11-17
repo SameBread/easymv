@@ -177,7 +177,7 @@ export function defaultFit(def) {
 
 /** Layer kinds. Image-like layers have textures from files; generated layers are drawn procedurally. */
 export const IMAGE_TYPES = ['static', 'spriteSheet', 'gif', 'frameSequence'];
-export const GENERATED_TYPES = ['visualizer', 'effect', 'lyrics'];
+export const GENERATED_TYPES = ['visualizer', 'effect', 'lyrics', 'script'];
 export const isImageType = (t) => IMAGE_TYPES.includes(t);
 export const isGeneratedType = (t) => GENERATED_TYPES.includes(t);
 

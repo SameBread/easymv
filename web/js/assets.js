@@ -166,7 +166,7 @@ export class SequenceAsset extends BaseAsset {
  * @param files Map<string, File> keyed by project path
  */
 export async function loadAsset(def, files, wasm, onProgress) {
-  if (def.type === 'visualizer' || def.type === 'effect' || def.type === 'lyrics') return new GeneratedAsset(def);
+  if (def.type === 'visualizer' || def.type === 'effect' || def.type === 'lyrics' || def.type === 'script') return new GeneratedAsset(def);
   const need = (path) => {
     const f = files.get(path);
     if (!f) throw new Error(`element '${def.id}': file '${path}' has not been provided`);

@@ -45,6 +45,8 @@ const srv = http.createServer((q, s) => {
     flag('pixel fire draws', o.fireLit > 200, o.fireLit),
     flag('lo-fi glitter draws', o.lofiLit > 5, o.lofiLit),
     flag('lyrics render text', o.lyricsLit > 100, o.lyricsLit),
+    flag('script layer draws scenes', o.scriptLit > 500, o.scriptLit),
+    flag('script scene 2 draws', o.scriptLit2 > 500, o.scriptLit2),
     flag('lyrics disappear after their window', o.lyricsGone < 5, o.lyricsGone),
     flag('hidden layer draws exactly like no layer', o.cullEqual),
     flag('hidden layer is dropped from the plan', o.visFlagCulled),

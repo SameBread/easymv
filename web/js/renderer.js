@@ -13,6 +13,9 @@ import { visSettings, visAmplitudes, buildVisual, hexToRgb, adjustRgb } from './
 import { fxSettings, FX_KINDS, hexToRgb as fxRgb, PARTICLE_VERT, PARTICLE_FRAG, FIRE_VERT, FIRE_FRAG } from './effects.js';
 import { lyricsSettings, activeLines, lineEnd, highlightFraction, placeLine } from './lyrics.js';
 import { ensureFont, measureLine, drawLine } from './textcanvas.js';
+import { compileFor, scriptFonts } from './script.js';
+import { frameAt } from './kinetic.js';
+import { familyCss, nearestWeight, migrateFont, loadBundled, isBundled } from './fonts.js';
 
 const VERT = `#version 300 es
 in vec2 aQ;
@@ -282,6 +285,7 @@ export class Renderer {
   async prepare(plan) {
     const pinned = new Set();
     for (const it of plan) if (it.kind === 'lyrics') await this._prepareLyrics(it);
+    for (const it of plan) if (it.kind === 'script') await this._prepareScript(it);
     plan = plan.filter((it) => it.kind === 'image');
     for (const it of plan) {
       pinned.add(Renderer.key(it.asset, it.asset.textureIndex(it.frameA)));
@@ -354,6 +358,7 @@ export class Renderer {
       case 'visualizer': this._drawVisualizer(it); break;
       case 'effect': this._drawEffect(it); break;
       case 'lyrics': this._drawLyrics(it); break;
+      case 'script': this._drawScript(it); break;
       default: this._drawElement(it, 1);
     }
     this.gl.bindVertexArray(this.vao);
@@ -539,6 +544,81 @@ export class Renderer {
     gl.uniform1f(u.uOpacity, props[P.opacity]);
     gl.uniform1f(u.uGlow, glow);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, fx.count);
+  }
+
+  // ---------- script (kinetic text) ----------
+
+  async _prepareScript(it) {
+    const def = it.asset.def;
+    const total = this.duration ?? 60;
+    for (const f of scriptFonts(def)) {
+      const m = migrateFont(f);
+      if (isBundled(m)) await loadBundled(m).catch(() => {});
+      if (document.fonts) for (const w of [400, 700, 800]) await document.fonts.load(`${nearestWeight(m, w)} 40px ${familyCss(m)}`, 'Aa').catch(() => []);
+    }
+    const c = compileFor(def, this.width, this.height, total);
+    let pulse = 0;
+    try {
+      const sp = this.audio?.spectrum('master', 4);
+      if (sp && sp.length) pulse = Math.min(1, Math.max(0, (sp[0] + (sp[1] ?? 0)) / 2));
+    } catch { /* no audio */ }
+    const f = frameAt(c, it.time, { pulse: pulse * (def.script?.pulse ?? 1) });
+    for (const pass of f.passes) for (const r of pass.runs) {
+      const px = Math.max(8, Math.round(r.size));
+      r.key = `scr|${r.text}|${r.font}|${r.weight}|${r.color}|${px}`;
+      if (this.textTex.has(r.key)) { const e = this.textTex.get(r.key); this.textTex.delete(r.key); this.textTex.set(r.key, e); continue; }
+      const font = migrateFont(r.font);
+      const g = document.createElement('canvas').getContext('2d');
+      const css = `${nearestWeight(font, r.weight)} ${px}px ${familyCss(font)}`;
+      g.font = css;
+      const pad = Math.ceil(px * 0.2);
+      const w = Math.ceil(g.measureText(r.text).width + pad * 2); const h = Math.ceil(px * 1.3 + pad * 2);
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      const k = cv.getContext('2d'); k.font = css; k.textAlign = 'center'; k.textBaseline = 'middle'; k.fillStyle = r.color;
+      k.fillText(r.text, w / 2, h / 2 + px * 0.04);
+      this._uploadText(r.key, cv);
+    }
+    it.scr = f;
+  }
+
+  _drawScript(it) {
+    if (!it.scr) return;
+    const gl = this.gl; const { props } = it;
+    const vp = gl.getParameter(gl.VIEWPORT); const k = vp[2] / this.width;
+    for (const pass of it.scr.passes) {
+      const rects = pass.scissors;
+      const run = () => {
+        const g = pass.geo;
+        if (g.n) {
+          const inter = new Float32Array(g.n * 6);
+          for (let i = 0; i < g.n; i++) { inter[i * 6] = g.pos[i * 2]; inter[i * 6 + 1] = g.pos[i * 2 + 1]; inter.set(g.col.subarray(i * 4, i * 4 + 4), i * 6 + 2); }
+          const { p, u } = this.visProg;
+          gl.useProgram(p);
+          gl.uniform2f(u.uCanvas, this.width, this.height);
+          gl.uniform2f(u.uPos, 0, 0); gl.uniform2f(u.uScale, 1, 1); gl.uniform1f(u.uRot, 0); gl.uniform2f(u.uMirror, 1, 1);
+          gl.uniform1f(u.uOpacity, props[P.opacity]);
+          gl.bindVertexArray(this.visVao);
+          gl.bindBuffer(gl.ARRAY_BUFFER, this.visBuf);
+          gl.bufferData(gl.ARRAY_BUFFER, inter, gl.DYNAMIC_DRAW);
+          gl.drawArrays(gl.TRIANGLES, 0, g.n);
+          gl.bindVertexArray(this.vao);
+        }
+        for (const r of pass.runs) {
+          const e = this.textTex.get(r.key); if (!e || r.alpha <= 0.001) continue;
+          const sc = r.size / Math.max(8, Math.round(r.size));
+          this._quad(e.tex, 1, r.clip, r.x, r.y, e.w * sc * r.sx, e.h * sc * r.sy, r.rot, props, props[P.opacity] * r.alpha);
+        }
+      };
+      if (rects) {
+        gl.enable(gl.SCISSOR_TEST);
+        for (const [x0, y0, x1, y1] of rects) {
+          if (x1 <= x0 || y1 <= y0) continue;
+          gl.scissor(Math.floor(x0 * k), Math.floor((this.height - y1) * k), Math.ceil((x1 - x0) * k), Math.ceil((y1 - y0) * k));
+          run();
+        }
+        gl.disable(gl.SCISSOR_TEST);
+      } else run();
+    }
   }
 
   // ---------- lyrics ----------

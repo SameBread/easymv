@@ -2,19 +2,22 @@
 // to a canvas (base colour, or the karaoke highlight colour). The browser's own text
 // engine does the shaping, so ligatures and non-Latin scripts just work.
 
-const GENERIC = new Set(['serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'system-ui']);
+import { familyCss, loadBundled, nearestWeight, migrateFont, isBundled } from './fonts.js';
+
 const loaded = new Map();
 
 export function fontCss(style, H) {
   const px = Math.max(8, Math.round(style.size * H));
-  const fam = GENERIC.has(style.font) ? style.font : `"${style.font}", sans-serif`;
-  return { css: `${style.italic ? 'italic ' : ''}${style.weight} ${px}px ${fam}`, px };
+  const font = migrateFont(style.font);
+  return { css: `${style.italic ? 'italic ' : ''}${nearestWeight(font, style.weight)} ${px}px ${familyCss(font)}`, px };
 }
 
 /** Make sure a (possibly user-supplied) font is ready before measuring or drawing. */
 export function ensureFont(style, H) {
   const { css } = fontCss(style, H);
-  if (!document.fonts || GENERIC.has(style.font)) return Promise.resolve();
+  if (!document.fonts) return Promise.resolve();
+  const font = migrateFont(style.font);
+  if (isBundled(font)) return loadBundled(font).then(() => document.fonts.load(css, 'Aa')).catch(() => []);
   if (!loaded.has(css)) loaded.set(css, document.fonts.load(css, 'Aa').catch(() => []));
   return loaded.get(css);
 }

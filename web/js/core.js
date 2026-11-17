@@ -15,6 +15,7 @@ import { packBundle, unpackBundle } from './bundle.js';
 import { VIS_DEFAULTS, VIS_PRESETS } from './visualizer.js';
 import { FX_KINDS, FX_COMMON } from './effects.js';
 import { LYRIC_DEFAULTS, lyricsSettings } from './lyrics.js';
+import { SCRIPT_DEFAULTS, scriptSettings } from './script.js';
 import { registerFont } from './textcanvas.js';
 import * as TL from './timeline.js';
 import { PROP_BY_NAME } from './props.js';
@@ -106,6 +107,7 @@ export const LAYER_TYPE_INFO = {
   visualizer: { label: 'Visualizer', icon: 'graphic_eq' },
   effect: { label: 'Effect', icon: 'auto_awesome' },
   lyrics: { label: 'Lyrics', icon: 'lyrics' },
+  script: { label: 'Script', icon: 'lyrics' },
 };
 
 // ---------- project model ----------
@@ -148,7 +150,7 @@ export function strip(p) {
   const { sections, ...rest } = p;
   return {
     ...rest,
-    elements: p.elements.map(({ _error, name, locked, background, vis, fx, lyrics, ...el }) => el),
+    elements: p.elements.map(({ _error, name, locked, background, vis, fx, lyrics, script, ...el }) => el),
     connections: p.connections.filter((c) => !c.muted).map(({ muted, ...c }) => c),
   };
 }
@@ -434,6 +436,20 @@ export async function addLyrics() {
   const id = uniqueId('lyrics', takenIds());
   const def = { id, name: 'Lyrics', type: 'lyrics', lyrics: structuredClone(LYRIC_DEFAULTS) };
   await pushLayers([def], 'Add lyrics');
+}
+
+export async function addScript(text) {
+  const id = uniqueId('script', takenIds());
+  const def = { id, name: 'Script', type: 'script', script: { ...structuredClone(SCRIPT_DEFAULTS), ...(text ? { text } : {}) } };
+  await pushLayers([def], 'Add script');
+  return id;
+}
+
+export function setScript(id, mutate, label = 'Edit script', key = null) {
+  const def = layerById(id); if (!def) return;
+  def.script = scriptSettings(def);
+  mutate(def.script);
+  structural(); commit(label, key);
 }
 
 export async function removeLayers(ids) {
@@ -785,7 +801,7 @@ export function recompile() {
   const seen = new Set();
   issueCache = found.filter((i) => !seen.has(i.message) && seen.add(i.message));
   for (const e of p.elements) if (e._error) issueCache.push({ severity: 'error', message: `${layerName(e)}: ${e._error}` });
-  if (state.renderer) { state.renderer.avoid = computeAvoid(); state.renderer.audio = audioProvider(); }
+  if (state.renderer) { state.renderer.avoid = computeAvoid(); state.renderer.audio = audioProvider(); state.renderer.duration = totalFrames() / p.videoFps; }
   emit('issues');
   drawSoon();
 }
@@ -891,6 +907,7 @@ export async function rebuildRenderer() {
   const [w, h] = state.project.resolution;
   state.renderer = new Renderer(state.canvas, { width: w, height: h, budgetMB: Number(state.prefs.budgetMB) });
   state.renderer.audio = audioProvider();
+  state.renderer.duration = totalFrames() / state.project.videoFps;
   state.renderer.avoid = computeAvoid();
   emit('renderer');
 }

@@ -6,17 +6,14 @@
 //     style:  { font, size, weight, italic, color, hiColor, outline, outlineColor, shadow, align, karaoke, maxWidth },
 //     anim:   { in: 'fade'|'slide'|'pop'|'type'|'none', out: 'fade'|'slide'|'none', dur },
 //     layout: { mode, seed, tilt, avoid } }
+import { migrateFont } from './fonts.js';
 // Times are seconds from the start of the song.
 
-export const LYRIC_FONTS = [
-  'system-ui', 'sans-serif', 'serif', 'monospace', 'cursive', 'fantasy',
-  'Impact', 'Arial Black', 'Georgia', 'Trebuchet MS', 'Courier New', 'Comic Sans MS',
-];
 
 export const LYRIC_DEFAULTS = {
   lines: [],
   style: {
-    font: 'system-ui', size: 0.075, weight: 700, italic: false,
+    font: 'Inter', size: 0.075, weight: 700, italic: false,
     color: '#ffffff', hiColor: '#ff6b9d', outline: 0.12, outlineColor: '#14151a', shadow: 0.25,
     align: 'center', karaoke: 'off', maxWidth: 0.82,
   },
@@ -37,7 +34,7 @@ export function lyricsSettings(def) {
   const l = def.lyrics ?? {};
   return {
     lines: l.lines ?? [],
-    style: { ...LYRIC_DEFAULTS.style, ...(l.style ?? {}) },
+    style: { ...LYRIC_DEFAULTS.style, ...(l.style ?? {}), font: migrateFont(l.style?.font) },
     anim: { ...LYRIC_DEFAULTS.anim, ...(l.anim ?? {}) },
     layout: { ...LYRIC_DEFAULTS.layout, ...(l.layout ?? {}) },
   };

@@ -1,0 +1,23 @@
+<!doctype html><meta charset="utf-8"><canvas id="c" width="1280" height="720"></canvas>
+<script type="module">
+import { Renderer } from '../js/renderer.js';
+import { GeneratedAsset } from '../js/assets.js';
+import { buildPlan, PROPERTY_COUNT } from '../js/animation.js';
+window.setup = async (script, fps, bpm) => {
+  const r = new Renderer(document.getElementById('c'), { width: 1280, height: 720, budgetMB: 64 });
+  const beat = 60 / bpm;
+  r.audio = { fps, spectrum: () => { const t = window.__t; const ph = (t % beat) / beat; const e = Math.exp(-ph * 5); return [e, e * 0.6, 0, 0]; }, pcm: () => null };
+  r.duration = 60;
+  const a = new GeneratedAsset({ id: 's', type: 'script', script });
+  a.ready = true;
+  const props = new Float32Array(PROPERTY_COUNT); props.set([.5, .5, 0, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 0, .5, .5, 1, 1]);
+  window.__r = r; window.__a = a; window.__p = props; window.__fps = fps;
+};
+window.render = async (f) => {
+  window.__t = f / window.__fps;
+  const plan = buildPlan([window.__a], { get: (e, p) => window.__p[p] }, f, window.__fps);
+  await window.__r.prepare(plan); window.__r.draw(plan);
+  return document.getElementById('c').toDataURL('image/png').split(',')[1];
+};
+window.ready = true;
+</script>

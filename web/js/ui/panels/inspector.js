@@ -383,6 +383,7 @@ export function createInspectorPanel(shell) {
     if (def.type === 'visualizer') element.append(visualizerSection(def));
     else if (def.type === 'effect') element.append(effectSection(def));
     else if (def.type === 'lyrics') element.append(lyricsSection(def));
+    else if (def.type === 'script') element.append(section('Script', 'lyrics', h('div.row', h('button.btn.tonal', { type: 'button', onclick: () => shell.showPanel('script') }, icon('lyrics'), 'Open Script panel'))));
     else element.append(imageSection(def, asset));
 
     const props = propsFor(def.type).filter((p) => showAdvanced || !p.advanced);

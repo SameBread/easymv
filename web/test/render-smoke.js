@@ -65,6 +65,11 @@ try {
   await frame([dark, lyr], [props({}), props({})], 0, 15); out.lyricsLit = lit(snap());
   await frame([dark, lyr], [props({}), props({})], 0, 15 + 30 * 40); out.lyricsGone = lit(snap());
 
+  const scr = new GeneratedAsset({ id: 'k', type: 'script', script: { text: '# Hello world\nBig **ideas** here\n\n- one\n- two', pack: 'punchy', seed: 2 } });
+  await frame([dark, scr], [props({}), props({})], 0, 60); out.scriptLit = lit(snap());
+  await frame([dark, scr], [props({}), props({})], 0, 60 + 30 * 3); out.scriptLit2 = lit(snap());
+  await frame([dark, scr], [props({}), props({})], 0, 60 + 30 * 3 - 4); out.scriptTrans = lit(snap());
+
   // culling equality: an invisible layer must draw exactly what no layer draws
   await frame([dark, vis], [props({}), props({ visible: 0 })], 0, 10); const hidden = snap();
   await frame([dark], [props({})], 0, 10); out.cullEqual = same(hidden, snap());

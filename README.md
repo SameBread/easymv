@@ -23,6 +23,8 @@ Browser-based automatic music-video generator. Implements design doc v0.5 (v0.4 
 | `.../gif_decode.rs` | `gif` crate, disposal compositing, 0/1 cs → 100 ms |
 | `.../lib.rs` | wasm-bindgen surface (`Engine`, `evaluate_batch`, `GifDecoder`, `auto_mode`) |
 | `web/js/animation.js` | internal animation clocks, atlas UVs, zip planning, draw plan (pure, unit-tested) |
+| `web/js/kinetic.js`, `script.js` | kinetic text engine: outline script → roles, auto layout, springs, transitions (pure, deterministic, no AI); `script` layer + Script panel + Present mode |
+| `web/js/fonts.js`, `web/fonts/` | bundled open fonts, optional local-font scan, generic-family migration |
 | `web/js/renderer.js` | WebGL2: transform, colour, Kawase blur, blend, LRU texture budget |
 | `web/js/exporter.js` | codec probing, deterministic export loop, backpressure, cancel, muxing |
 | `web/js/history.js` | undo/redo (snapshots, drag coalescing, labels) |

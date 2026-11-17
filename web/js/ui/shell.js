@@ -10,6 +10,7 @@ import { createInspectorPanel } from './panels/inspector.js';
 import { createTimelinePanel } from './panels/timeline.js';
 import { createSignalsPanel } from './panels/signals.js';
 import { createLyricsPanel } from './panels/lyrics.js';
+import { createScriptPanel } from './panels/script.js';
 import { VIS_PRESETS } from '../visualizer.js';
 import { FX_KINDS, FX_IDS } from '../effects.js';
 
@@ -20,14 +21,15 @@ const PANELS = [
   { id: 'timeline', title: 'Timeline', icon: 'timeline', make: createTimelinePanel },
   { id: 'signals', title: 'Signals', icon: 'graphic_eq', make: createSignalsPanel },
   { id: 'lyrics', title: 'Lyrics', icon: 'lyrics', make: createLyricsPanel },
+  { id: 'script', title: 'Script', icon: 'slideshow', make: createScriptPanel },
 ];
-const PHONE_NAV = ['layers', 'inspector', 'timeline', 'signals', 'lyrics'];
+const PHONE_NAV = ['layers', 'inspector', 'timeline', 'signals', 'lyrics', 'script'];
 
 // Built-in workspaces: functions that lay panels out with Dockview's relative positions.
 const BUILTIN = {
   Compose: (add) => {
     add('preview'); add('layers', 'preview', 'left', { w: 250 }); add('inspector', 'preview', 'right', { w: 330 });
-    add('timeline', 'preview', 'below', { h: 250 }); add('signals', 'layers', 'within'); add('lyrics', 'inspector', 'within');
+    add('timeline', 'preview', 'below', { h: 250 }); add('signals', 'layers', 'within'); add('lyrics', 'inspector', 'within'); add('script', 'inspector', 'within');
     return ['layers', 'inspector'];
   },
   Animate: (add) => {
@@ -39,6 +41,11 @@ const BUILTIN = {
     add('preview'); add('lyrics', 'preview', 'right', { w: 420 }); add('layers', 'preview', 'left', { w: 220 });
     add('timeline', 'preview', 'below', { h: 240 }); add('inspector', 'lyrics', 'within');
     return ['lyrics'];
+  },
+  Present: (add) => {
+    add('preview'); add('script', 'preview', 'right', { w: 420 }); add('layers', 'preview', 'left', { w: 220 });
+    add('timeline', 'preview', 'below', { h: 200 }); add('inspector', 'script', 'within');
+    return ['script'];
   },
   Mix: (add) => {
     add('preview'); add('signals', 'preview', 'left', { w: 340 }); add('inspector', 'preview', 'right', { w: 330 });
@@ -109,6 +116,7 @@ export function createShell(root, dv) {
       { label: 'Visualizer', icon: 'graphic_eq', submenu: VIS_PRESETS.map((p, i) => ({ label: p.label ?? p.name, run: () => core.addVisualizer(i) })) },
       { label: 'Effect', icon: 'auto_awesome', submenu: FX_IDS.map((k) => ({ label: FX_KINDS[k].label, icon: FX_KINDS[k].icon, run: () => core.addEffect(k) })) },
       { label: 'Lyrics', icon: 'lyrics', run: () => core.addLyrics() },
+      { label: 'Script / presentation', icon: 'slideshow', run: async () => { await core.addScript(); shell.showPanel('script'); } },
     ];
   }
   const sel = () => state.selected && core.layerById(state.selected);
