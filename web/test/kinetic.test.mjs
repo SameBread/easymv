@@ -152,3 +152,10 @@ test('syllables appear one by one with editable durations', () => {
   const d = mk('go **ba|na|na**{step=.5}').scenes[0].runs.filter((r) => /^na$/i.test(r.text));
   assert.ok(Math.abs(d[1].t0 - d[0].t0 - 0.5) < 1e-6);
 });
+test('size per line, word and syllable; others stay normal', () => {
+  const c = mk('::layout center\nfirst line\nbig line {size=2}\nplain **col^2|laps|ing**');
+  const R = (t) => c.scenes[0].runs.find((r) => r.text.toLowerCase() === t);
+  assert.ok(R('big').size > R('first').size * 1.5);
+  assert.ok(R('col').size > R('laps').size * 1.5);
+  assert.ok(Math.abs(R('laps').size - R('ing').size) < 1e-6);
+});

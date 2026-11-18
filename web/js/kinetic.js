@@ -172,9 +172,9 @@ function parseWords(text) {
       const w = { t: tok, emph };
       if (mod) w.mod = mod;
       if (tok.includes('|')) {   // syllables: col|laps~.6|ing  (~n = seconds before the next one; default mod step or 0.28)
-        const parts = tok.split('|').filter(Boolean).map((p) => { const m = /^(.*?)(?:~(\d*\.?\d+))?$/.exec(p); return { t: m[1], d: m[2] != null ? Number(m[2]) : null }; }).filter((x) => x.t);
+        const parts = tok.split('|').filter(Boolean).map((p) => { const m = /^(.*?)(?:\^(\d*\.?\d+))?(?:~(\d*\.?\d+))?$/.exec(p); return { t: m[1], f: m[2] != null ? Math.min(4, Number(m[2])) : 1, d: m[3] != null ? Number(m[3]) : null }; }).filter((x) => x.t);
         if (parts.length > 1) { w.t = parts.map((x) => x.t).join(''); w.syl = parts; }
-        else w.t = tok.replace(/[|]|~\d*\.?\d+/g, '');
+        else w.t = tok.replace(/[|]|[~^]\d*\.?\d+/g, '');
       }
       words.push(w);
     }
@@ -738,10 +738,10 @@ export function compileScript(script, ctx) {
       if (!r.syl || r.deco) return [base];
       // syllables: one run each, left to right inside the word's box, appearing one by one
       const parts = r.syl.map((p) => scx.text(r.role, p.t));
-      const ws = parts.map((p) => scx.width(p, r.role, r.size)); const tot = ws.reduce((a2, b2) => a2 + b2, 0) || 1;
-      const kx = r.w / tot; let x = r.x - r.w / 2; let tt = base.t0;
+      const ws = parts.map((p, si) => scx.width(p, r.role, r.size * r.syl[si].f)); const tot = ws.reduce((a2, b2) => a2 + b2, 0) || 1;
+      const kx = 1; let x = r.x - tot / 2; let tt = base.t0;
       return parts.map((p, si) => {
-        const pw = ws[si] * kx; const out = { ...base, text: p, w: pw, x: x + pw / 2, t0: tt, bar: false, color: onBar ? 'accent' : base.color, syl: undefined, phase: base.phase + si };
+        const pw = ws[si] * kx; const out = { ...base, text: p, size: r.size * r.syl[si].f, w: pw, x: x + pw / 2, t0: tt, bar: false, color: onBar ? 'accent' : base.color, syl: undefined, phase: base.phase + si };
         x += pw; tt += r.syl[si].d ?? r.mod?.step ?? 0.28;
         return out;
       });
