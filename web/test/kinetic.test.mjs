@@ -142,3 +142,13 @@ test('line {at} and word {at} placement, word styling', () => {
   const big = runs.find((r) => r.text.toLowerCase() === 'big'); assert.equal(big.color, '#ff0000');
   const plain = runs.find((r) => r.text.toLowerCase() === 'plain'); assert.ok(big.size > plain.size * 1.5);
 });
+test('syllables appear one by one with editable durations', () => {
+  const c = mk('[0:54.90-0:59.00] i\'m **col|laps~.6|ing**{size=2 color=accent} {at=B3}');
+  const rs = c.scenes[0].runs.filter((r) => /^(col|laps|ing)$/i.test(r.text));
+  assert.equal(rs.length, 3);
+  assert.ok(rs[0].x < rs[1].x && rs[1].x < rs[2].x);
+  assert.ok(Math.abs(rs[1].t0 - rs[0].t0 - 0.28) < 1e-6);
+  assert.ok(Math.abs(rs[2].t0 - rs[1].t0 - 0.6) < 1e-6);
+  const d = mk('go **ba|na|na**{step=.5}').scenes[0].runs.filter((r) => /^na$/i.test(r.text));
+  assert.ok(Math.abs(d[1].t0 - d[0].t0 - 0.5) < 1e-6);
+});

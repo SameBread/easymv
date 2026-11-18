@@ -118,3 +118,4 @@ Deferred per the design doc: BPM/beat tracking, threading, lyrics, `wgpu`, audio
 - Effects/visualizers default to *Screen* blend; new overlays always land on top, new pictures above your other pictures.
 - Script placement: `::at B2`, `::at left`, `::align`, line `{at=C3}`, word `[text]{size=1.6 color=accent at=A1 delay=.4 motion=pop}`.
 - Engine never receives render-only data: `strip()` hides `visualBlend` and sends script layers as `lyrics`; Rust also knows `Script` and `Screen` now (rebuild WASM to pick it up).
+- Syllables: `col|laps~.6|ing` reveals one by one; `~n` = seconds before the next, `{step=.4}` sets the default.

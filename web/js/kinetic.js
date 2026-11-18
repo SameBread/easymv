@@ -152,6 +152,7 @@ export function parseMods(str) {
     else if (k === 'color' || k === 'colour') m.color = v;
     else if (k === 'accent' || k === 'dim' || k === 'fg') m.color = k;
     else if (k === 'at' && v) m.at = v;
+    else if (k === 'step' && v != null && Number(v) > 0) m.step = Math.min(3, Number(v));
     else if (k === 'delay' && v != null && Number.isFinite(Number(v))) m.delay = Number(v);
     else if (k === 'motion' && v) m.motion = v;
     else if (/^[A-Ca-c][1-3]$/.test(k) && v == null) m.at = tok;
@@ -167,7 +168,15 @@ function parseWords(text) {
       let tok = w0; let emph = on;
       if (tok.startsWith('**')) { on = true; emph = true; tok = tok.slice(2); }
       if (tok.endsWith('**')) { tok = tok.slice(0, -2); on = false; }
-      if (tok) words.push(mod ? { t: tok, emph, mod } : { t: tok, emph });
+      if (!tok) continue;
+      const w = { t: tok, emph };
+      if (mod) w.mod = mod;
+      if (tok.includes('|')) {   // syllables: col|laps~.6|ing  (~n = seconds before the next one; default mod step or 0.28)
+        const parts = tok.split('|').filter(Boolean).map((p) => { const m = /^(.*?)(?:~(\d*\.?\d+))?$/.exec(p); return { t: m[1], d: m[2] != null ? Number(m[2]) : null }; }).filter((x) => x.t);
+        if (parts.length > 1) { w.t = parts.map((x) => x.t).join(''); w.syl = parts; }
+        else w.t = tok.replace(/[|]|~\d*\.?\d+/g, '');
+      }
+      words.push(w);
     }
   };
   let m;
@@ -397,7 +406,7 @@ function placeBlock(cx, lines, b, box, { align = 'center', anchorY = 'middle', s
     const off = shift ? shift(ri, b.rows.length) : { dx: 0, dy: 0 };
     for (let k = row.a; k < row.b; k++) {
       const w = row.widths[k];
-      runs.push({ text: row.words[k], role: ln.role, li: row.li, wi: k, emph: ln.words[k].emph, size: row.px * (row.fs?.[k] ?? 1), mod: ln.words[k].mod,
+      runs.push({ text: row.words[k], role: ln.role, li: row.li, wi: k, emph: ln.words[k].emph, size: row.px * (row.fs?.[k] ?? 1), mod: ln.words[k].mod, syl: ln.words[k].syl,
         x: x + w / 2 + off.dx, y: y0 + row.y + off.dy, w, rot });
       x += w + row.space;
     }
@@ -710,10 +719,11 @@ export function compileScript(script, ctx) {
     const spring = { k: SP.spring.k * (0.7 + 0.6 * energy), z: SP.spring.z };
     const step = SP.step * (1.35 - 0.7 * energy);
     const lineCount = new Map();
-    const runs = lay.runs.map((r0, idx) => {
+    const runs = lay.runs.flatMap((r0, idx) => {
       let r = r0;
       const li = r.li >= 0 ? r.li : 0;
       const ord = lineCount.get(li) ?? 0; lineCount.set(li, ord + 1);
+      if (!r.syl && !r.deco && sc.lines[li]) { const w = sc.lines[li].words.find((x) => x.syl && x.t.toLowerCase() === String(r.text).toLowerCase()); if (w) r = { ...r, syl: w.syl, mod: r.mod ?? w.mod }; }
       if (!r.mod && !r.deco && sc.lines[li]) { const w = sc.lines[li].words.find((x) => x.mod && x.t.toLowerCase() === String(r.text).toLowerCase()); if (w) r = { ...r, mod: w.mod, size: r.size * (w.mod.size ?? 1) }; }
       const mc = r.mod?.color;
       const c = mc ?? r.color ?? (r.emph && emphStyle === 'color' ? 'accent' : r.role === 'whisper' || r.role === 'cite' ? 'dim' : 'fg');
@@ -722,9 +732,19 @@ export function compileScript(script, ctx) {
       if (reveal === 'line') rt = lineT[li] + ord * 0.02;
       else if (reveal === 'word') { const nW = sc.lines[li].words.length; const span = Math.max(0.2, lineEnds[li] - lineT[li]); rt = lineT[li] + ord * Math.min(0.9, (span * 0.8) / Math.max(1, nW)); }
       rt += r.mod?.delay ?? 0;
-      return { ...r, idx, font: scx.font(r.role), weight: scx.weight(r.role), color: onBar ? 'onAccent' : c,
+      const base = { ...r, idx, font: scx.font(r.role), weight: scx.weight(r.role), color: onBar ? 'onAccent' : c,
         t0: r.deco ? lineT[0] : rt, anim: { type: r.deco ? 'zoom' : (IN_FOR[r.mod?.motion] ?? inType), spring },
         bar: onBar, phase: rnd(seed, 'ph', i, idx) * 6.283 };
+      if (!r.syl || r.deco) return [base];
+      // syllables: one run each, left to right inside the word's box, appearing one by one
+      const parts = r.syl.map((p) => scx.text(r.role, p.t));
+      const ws = parts.map((p) => scx.width(p, r.role, r.size)); const tot = ws.reduce((a2, b2) => a2 + b2, 0) || 1;
+      const kx = r.w / tot; let x = r.x - r.w / 2; let tt = base.t0;
+      return parts.map((p, si) => {
+        const pw = ws[si] * kx; const out = { ...base, text: p, w: pw, x: x + pw / 2, t0: tt, bar: false, color: onBar ? 'accent' : base.color, syl: undefined, phase: base.phase + si };
+        x += pw; tt += r.syl[si].d ?? r.mod?.step ?? 0.28;
+        return out;
+      });
     });
     // character-level reveal for short title runs when the scene asks for it (typewriter)
     const decor = (lay.decor ?? []).map((dc) => ({ ...dc, t0: dc.li != null ? lineT[dc.li] : t0 + lead, spring }));
