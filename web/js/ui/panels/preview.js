@@ -80,7 +80,7 @@ export function createPreviewPanel(shell) {
     const total = core.totalFrames();
     scrub.max = Math.max(0, total - 1);
     scrub.value = state.frame;
-    for (const b of [play, prev, next, toStart, back10, fwd10, toEnd, loop, speed, scrub]) b.disabled = !ready;
+    // transport is never disabled: every button works with or without a song or renderer
     loop.classList.toggle('on', core.transport.loop);
     const fps = state.project.videoFps;
     time.textContent = `${fmtTime(state.frame / fps)} / ${fmtTime(total / fps)}`;

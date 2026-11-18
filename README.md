@@ -117,3 +117,4 @@ Deferred per the design doc: BPM/beat tracking, threading, lyrics, `wgpu`, audio
 - Preview works without a song (silent clock); resize/rotate handles; VLC-style transport (start, −10 s, frame, play, +10 s, end, loop, speed; keys Home/End/J/L).
 - Effects/visualizers default to *Screen* blend; new overlays always land on top, new pictures above your other pictures.
 - Script placement: `::at B2`, `::at left`, `::align`, line `{at=C3}`, word `[text]{size=1.6 color=accent at=A1 delay=.4 motion=pop}`.
+- Engine never receives render-only data: `strip()` hides `visualBlend` and sends script layers as `lyrics`; Rust also knows `Script` and `Screen` now (rebuild WASM to pick it up).

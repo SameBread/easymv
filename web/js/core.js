@@ -151,7 +151,8 @@ export function strip(p) {
   const { sections, ...rest } = p;
   return {
     ...rest,
-    elements: p.elements.map(({ _error, name, locked, background, vis, fx, lyrics, script, ...el }) => el),
+    // the engine only routes numbers: render-only choices (blend mode, script type) are hidden from it so an older engine build still accepts them
+    elements: p.elements.map(({ _error, name, locked, background, vis, fx, lyrics, script, visualBlend, ...el }) => (el.type === 'script' ? { ...el, type: 'lyrics' } : el)),
     connections: p.connections.filter((c) => !c.muted).map(({ muted, ...c }) => c),
   };
 }

@@ -278,6 +278,8 @@ const srv = http.createServer((q, s) => {
     // v0.7 regressions: preview without a song, hide, transport, handles, timeline seeking
     await E(async () => { await easymv.core.addDemo(); await easymv.core.addScriptDemo('lyrics'); });
     await pg.waitForTimeout(700);
+    check('engine never sees render-only fields (script type, visualBlend)', await E(() => { const o = easymv.core.strip(easymv.core.state.project); return o.elements.every((e) => e.type !== 'script' && !('visualBlend' in e)); }));
+    check('transport buttons are all enabled', await E(() => [...document.querySelectorAll('.transport button, .transport select, .transport input')].every((b) => !b.disabled)));
     check('renderer exists even if no song was chosen', await E(() => !!easymv.core.state.renderer));
     const planIds = () => E(() => easymv.core.state.lastPlan?.map((p) => p.asset.def.id) ?? []);
     const rain = await E(() => easymv.core.state.project.elements.find((e) => e.id === 'rain')?.id);

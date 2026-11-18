@@ -80,6 +80,7 @@ pub enum ElementType {
     Visualizer,
     Effect,
     Lyrics,
+    Script,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -98,6 +99,7 @@ pub enum VisualBlend {
     Normal,
     Add,
     Multiply,
+    Screen,
 }
 
 /// How an element's intrinsic size maps to the canvas at `scale == 1`.
@@ -482,7 +484,7 @@ fn validate_element(e: &ElementDef, video_fps: f64, out: &mut Vec<Issue>) {
                 )));
             }
         }
-        ElementType::Visualizer | ElementType::Effect | ElementType::Lyrics => {}
+        ElementType::Visualizer | ElementType::Effect | ElementType::Lyrics | ElementType::Script => {}
         ElementType::FrameSequence => {
             if e.zip_path.as_deref().map_or(true, str::is_empty) {
                 out.push(Issue::err(format!("element '{}': 'zipPath' is required", id)));
@@ -639,7 +641,7 @@ mod tests {
     #[test]
     fn new_element_kinds_need_no_path() {
         let mut p = sample_project();
-        for (id, k) in [("v", "visualizer"), ("fx", "effect"), ("ly", "lyrics")] {
+        for (id, k) in [("v", "visualizer"), ("fx", "effect"), ("ly", "lyrics"), ("sc", "script")] {
             let e: ElementDef = serde_json::from_str(&format!(
                 r#"{{"id":"{id}","type":"{k}","vis":{{"shape":"circle"}},"lines":[]}}"#
             ))
