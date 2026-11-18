@@ -2,8 +2,10 @@
 
 import * as core from '../../core.js';
 import { state, on, fmtTime } from '../../core.js';
+import { P } from '../../animation.js';
+const P_ROT = P.rotation;
 import { h, icon, iconBtn, btn, rafThrottle } from '../dom.js';
-import { hitTest, itemQuad } from '../../interact.js';
+import { hitTest, itemQuad, itemCenter } from '../../interact.js';
 
 export function createPreviewPanel(shell) {
   const canvas = h('canvas.view', { width: 1280, height: 720, 'aria-label': 'Video preview' });
@@ -19,12 +21,19 @@ export function createPreviewPanel(shell) {
   frame.append(empty);
 
   const play = iconBtn('play_arrow', 'Play / pause (Space)', () => core.togglePlay(), 'primary');
+  const toStart = iconBtn('first_page', 'Go to start (Home)', () => { core.stop(); core.seek(0); });
+  const back10 = iconBtn('replay_10', 'Back 10 seconds (J)', () => core.skip(-10));
   const prev = iconBtn('skip_previous', 'Previous frame (←)', () => core.seek(state.frame - 1));
   const next = iconBtn('skip_next', 'Next frame (→)', () => core.seek(state.frame + 1));
+  const fwd10 = iconBtn('forward_10', 'Forward 10 seconds (L)', () => core.skip(10));
+  const toEnd = iconBtn('last_page', 'Go to end (End)', () => { core.stop(); core.seek(core.totalFrames() - 1); });
+  const loop = iconBtn('repeat', 'Loop', () => core.setLoop(!core.transport.loop));
+  const speed = h('select.speed', { 'aria-label': 'Playback speed', title: 'Playback speed', onchange: () => core.setSpeed(Number(speed.value)) },
+    ...[0.5, 0.75, 1, 1.25, 1.5, 2].map((v) => h('option', { value: v, selected: v === 1 }, `${v}×`)));
   const time = h('span.time', '0:00 / 0:00');
   const scrub = h('input.scrub', { type: 'range', min: 0, max: 0, value: 0, step: 1, 'aria-label': 'Playhead' });
-  scrub.addEventListener('input', () => { if (state.playing) core.stop(); core.seek(Number(scrub.value)); });
-  const bar = h('div.transport', prev, play, next, time, scrub);
+  scrub.addEventListener('input', () => { core.seek(Number(scrub.value)); });
+  const bar = h('div.transport', toStart, back10, prev, play, next, fwd10, toEnd, time, scrub, loop, speed);
   const element = h('div.panel-preview', frame, bar);
 
   core.attachCanvas(canvas);
@@ -51,23 +60,34 @@ export function createPreviewPanel(shell) {
     const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
     poly.setAttribute('points', itemQuad(it, cw, ch).map((q) => q.join(',')).join(' '));
     svg.append(poly);
+    const q = itemQuad(it, cw, ch);
+    const S = Math.max(cw, ch) / 90;   // handle size in canvas px
+    const mk = (tag, attrs) => { const el = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const k in attrs) el.setAttribute(k, attrs[k]); svg.append(el); return el; };
+    if (it.asset.def.locked) return;
+    q.forEach(([x, y], i) => mk('rect', { x: x - S / 2, y: y - S / 2, width: S, height: S, class: 'handle', 'data-h': 'scale', 'data-i': i }));
+    const mid = [(q[0][0] + q[1][0]) / 2, (q[0][1] + q[1][1]) / 2];
+    const c = itemCenter(it, cw, ch);
+    const dx = mid[0] - c[0]; const dy = mid[1] - c[1]; const dl = Math.hypot(dx, dy) || 1;
+    const rx = mid[0] + (dx / dl) * S * 3; const ry = mid[1] + (dy / dl) * S * 3;
+    mk('line', { x1: mid[0], y1: mid[1], x2: rx, y2: ry, class: 'handle-stem' });
+    mk('circle', { cx: rx, cy: ry, r: S * 0.6, class: 'handle', 'data-h': 'rotate' });
   };
 
   const refresh = () => {
-    const ready = !!state.bridge;
-    empty.hidden = ready;
-    canvas.style.visibility = ready ? 'visible' : 'hidden';
+    const ready = !!state.renderer;
+    empty.hidden = !!state.bridge || state.project.elements.length > 0;
+    canvas.style.visibility = ready && empty.hidden ? 'visible' : 'hidden';
     const total = core.totalFrames();
     scrub.max = Math.max(0, total - 1);
     scrub.value = state.frame;
-    scrub.disabled = !ready;
-    for (const b of [play, prev, next]) b.disabled = !ready;
+    for (const b of [play, prev, next, toStart, back10, fwd10, toEnd, loop, speed, scrub]) b.disabled = !ready;
+    loop.classList.toggle('on', core.transport.loop);
     const fps = state.project.videoFps;
-    time.textContent = ready ? `${fmtTime(state.frame / fps)} / ${fmtTime(total / fps)}` : '0:00 / 0:00';
+    time.textContent = `${fmtTime(state.frame / fps)} / ${fmtTime(total / fps)}`;
     play.replaceChildren(icon(state.playing ? 'pause' : 'play_arrow'));
   };
   on('frame', () => { refresh(); updateOverlay(); });
-  on('engine', refresh); on('transport', refresh); on('project', refresh); on('selection', updateOverlay);
+  on('engine', refresh); on('renderer', refresh); on('transport', refresh); on('project', refresh); on('selection', updateOverlay);
 
   // ---- direct manipulation ----
   const ptrs = new Map();
@@ -76,9 +96,20 @@ export function createPreviewPanel(shell) {
     const r = canvas.getBoundingClientRect();
     return [((e.clientX - r.left) * canvas.width) / r.width, ((e.clientY - r.top) * canvas.height) / r.height];
   };
+  let hd = null;   // active handle drag
   stage.addEventListener('pointerdown', (e) => {
     if (!state.lastPlan) return;
     stage.setPointerCapture(e.pointerId);
+    const kind = e.target?.dataset?.h;
+    if (kind && state.selected) {
+      const it = state.lastPlan.find((x) => x.asset.def.id === state.selected);
+      if (it && state.renderer) {
+        const c = itemCenter(it, state.renderer.width, state.renderer.height);
+        const [px, py] = toCanvas(e);
+        hd = { kind, c, last: Math.hypot(px - c[0], py - c[1]) || 1, rot0: it.props[P_ROT], a0: Math.atan2(py - c[1], px - c[0]) };
+        e.preventDefault(); return;
+      }
+    }
     ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (ptrs.size === 1) {
       const [x, y] = toCanvas(e);
@@ -94,6 +125,18 @@ export function createPreviewPanel(shell) {
     }
   });
   stage.addEventListener('pointermove', (e) => {
+    if (hd && state.selected) {
+      const [px, py] = toCanvas(e);
+      if (hd.kind === 'scale') {
+        const d = Math.hypot(px - hd.c[0], py - hd.c[1]) || 1;
+        core.nudgeLayer(state.selected, 0, 0, d / hd.last); hd.last = d;
+      } else {
+        let r = hd.rot0 + (Math.atan2(py - hd.c[1], px - hd.c[0]) - hd.a0);
+        if (e.shiftKey) r = Math.round(r / (Math.PI / 12)) * (Math.PI / 12);
+        core.setProperty(state.selected, 'rotation', r, 'Rotate layer', `rot:${state.selected}`);
+      }
+      return;
+    }
     const prevPt = ptrs.get(e.pointerId);
     if (!prevPt || !state.selected) return;
     const r = canvas.getBoundingClientRect();
@@ -107,7 +150,7 @@ export function createPreviewPanel(shell) {
     }
     ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
   });
-  const up = (e) => { ptrs.delete(e.pointerId); if (!ptrs.size) dragging = false; };
+  const up = (e) => { hd = null; ptrs.delete(e.pointerId); if (!ptrs.size) dragging = false; };
   stage.addEventListener('pointerup', up);
   stage.addEventListener('pointercancel', up);
   stage.addEventListener('wheel', (e) => {

@@ -115,7 +115,7 @@ export function createLayersPanel(shell) {
       target = k;
       const ref = rows[Math.min(k, rows.length - 1)].getBoundingClientRect();
       const lr = list.getBoundingClientRect();
-      line.style.top = `${(k >= rows.length ? ref.bottom : ref.top) - lr.top + list.scrollTop - 1}px`;
+      line.style.top = `${(k >= rows.length ? ref.bottom : ref.top) - lr.top - 1.5}px`;
     };
     const end = () => {
       handle.removeEventListener('pointermove', move);

@@ -275,6 +275,34 @@ const srv = http.createServer((q, s) => {
     await until((c) => easymv.core.state.project.elements.length === c, cnt);
     check('delete selected layer, then undo restores it', true);
 
+    // v0.7 regressions: preview without a song, hide, transport, handles, timeline seeking
+    await E(async () => { await easymv.core.addDemo(); await easymv.core.addScriptDemo('lyrics'); });
+    await pg.waitForTimeout(700);
+    check('renderer exists even if no song was chosen', await E(() => !!easymv.core.state.renderer));
+    const planIds = () => E(() => easymv.core.state.lastPlan?.map((p) => p.asset.def.id) ?? []);
+    const rain = await E(() => easymv.core.state.project.elements.find((e) => e.id === 'rain')?.id);
+    if (rain) {
+      check('effect layer is in plan', (await planIds()).includes('rain'));
+      await E((id) => easymv.core.setProperty(id, 'visible', 0, 'hide'), rain); await pg.waitForTimeout(500);
+      check('hidden layer leaves the preview', !(await planIds()).includes('rain'));
+      await E((id) => easymv.core.setProperty(id, 'visible', 1, 'show'), rain); await pg.waitForTimeout(300);
+    }
+    check('overlays stay above a newly added picture', await E(async () => { const c = easymv.core; const els = c.state.project.elements; const iFx = els.findIndex((e) => e.type === 'effect' || e.type === 'script'); const iImg = els.map((e, i) => (['effect', 'visualizer', 'lyrics', 'script'].includes(e.type) ? -1 : i)).reduce((a, b) => Math.max(a, b), -1); return iImg < iFx; }));
+    await pg.click('.transport [aria-label="Forward 10 seconds (L)"]'); await pg.waitForTimeout(200);
+    const f10 = await E(() => easymv.core.state.frame);
+    check('transport: +10 s', f10 === Math.min(await E(() => easymv.core.totalFrames() - 1), 10 * (await E(() => easymv.core.state.project.videoFps))), String(f10));
+    await pg.click('.transport [aria-label="Go to end (End)"]'); await pg.waitForTimeout(100);
+    check('transport: go to end', await E(() => easymv.core.state.frame === easymv.core.totalFrames() - 1));
+    await pg.click('.transport [aria-label="Go to start (Home)"]');
+    check('transport: go to start', (await E(() => easymv.core.state.frame)) === 0);
+    const tr = pg.locator('.tl-ruler .tl-track').first();
+    if (await tr.count()) { const bb = await tr.boundingBox(); await pg.mouse.click(bb.x + bb.width * 0.5, bb.y + bb.height / 2); await pg.waitForTimeout(150);
+      const fr = await E(() => easymv.core.state.frame); const tot = await E(() => easymv.core.totalFrames());
+      check('timeline ruler click seeks', Math.abs(fr - tot / 2) < tot * 0.08, `${fr}/${tot}`); }
+    const scr = await E(() => easymv.core.state.project.elements.find((e) => e.type === 'script')?.id);
+    if (scr) { await E((id) => easymv.core.select(id), scr); await pg.waitForTimeout(300);
+      check('selected layer shows resize + rotate handles', (await pg.locator('.sel-overlay .handle').count()) >= 5); }
+
     // Export dialog opens and mentions size
     await E(async () => { if (!easymv.core.state.bridge) { easymv.core.setMaster(new File([new Uint8Array(64)], 's.wav', { type: 'audio/wav' })); await easymv.core.analyze(); } });
     await until(() => easymv.core.state.bridge);

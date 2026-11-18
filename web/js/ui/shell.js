@@ -199,6 +199,9 @@ export function createShell(root, dv) {
     else if (e.key === 'ArrowLeft' && !e.target.closest('.tl-scroll')) { e.preventDefault(); core.seek(state.frame - (e.shiftKey ? 10 : 1)); }
     else if (e.key === 'ArrowRight' && !e.target.closest('.tl-scroll')) { e.preventDefault(); core.seek(state.frame + (e.shiftKey ? 10 : 1)); }
     else if (e.key === 'Home') { core.seek(0); }
+    else if (e.key === 'End') { core.seek(core.totalFrames() - 1); }
+    else if (e.key.toLowerCase() === 'j') { core.skip(-10); }
+    else if (e.key.toLowerCase() === 'l') { core.skip(10); }
     else if (e.key.toLowerCase() === 't' && !/BUTTON/.test(tag)) { commands.tap.run(); }
     else if (e.key === 'Delete' && !e.target.closest('.tl-scroll') && sel()) { commands.del.run(); }
   });

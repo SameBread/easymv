@@ -83,7 +83,7 @@ dependencies = [
 
 [[package]]
 name = "easymv-engine"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "console_error_panic_hook",
  "gif",

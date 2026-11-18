@@ -31,7 +31,7 @@ export function propsFor(type) {
   const skip = new Set();
   if (type === 'visualizer') ['anchorX', 'anchorY'].forEach((n) => skip.add(n));
   if (type === 'effect') ['anchorX', 'anchorY', 'mirrorX', 'mirrorY', 'hueShift'].forEach((n) => skip.add(n));
-  if (type === 'script') ['anchorX', 'anchorY', 'mirrorX', 'mirrorY', 'positionX', 'positionY', 'scale', 'scaleX', 'scaleY', 'rotation'].forEach((n) => skip.add(n));
+  if (type === 'script') ['anchorX', 'anchorY', 'mirrorX', 'mirrorY'].forEach((n) => skip.add(n));
   if (type === 'lyrics') ['anchorX', 'anchorY', 'mirrorX', 'mirrorY'].forEach((n) => skip.add(n));
   if (type !== 'visualizer' && type !== 'effect') skip.add('intensity');
   return PROPS.filter((p) => !skip.has(p.name));

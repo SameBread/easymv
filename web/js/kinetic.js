@@ -140,15 +140,71 @@ const TT = String.raw`(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?`;
 const TIME_TAG = new RegExp(String.raw`^\[${TT}(?:\s*[-\u2013>]\s*${TT})?\]\s*`);
 const tsec = (a, b, c) => Number(a) * 60 + Number(b) + (c ? Number(c) / 10 ** c.length : 0);
 
+/** `{size=1.5 color=accent at=C3 delay=.3 motion=pop}` -> { size, color, at, delay, motion }. Bare words: big, small, accent, dim. */
+export function parseMods(str) {
+  const m = {};
+  for (const tok of String(str).split(/[\s,]+/).filter(Boolean)) {
+    const kv = /^(\w+)[=:](.+)$/.exec(tok);
+    const [k, v] = kv ? [kv[1].toLowerCase(), kv[2]] : [tok.toLowerCase(), null];
+    if (k === 'size' && v != null && Number(v) > 0) m.size = Math.min(4, Number(v));
+    else if (k === 'big') m.size = 1.5;
+    else if (k === 'small') m.size = 0.7;
+    else if (k === 'color' || k === 'colour') m.color = v;
+    else if (k === 'accent' || k === 'dim' || k === 'fg') m.color = k;
+    else if (k === 'at' && v) m.at = v;
+    else if (k === 'delay' && v != null && Number.isFinite(Number(v))) m.delay = Number(v);
+    else if (k === 'motion' && v) m.motion = v;
+    else if (/^[A-Ca-c][1-3]$/.test(k) && v == null) m.at = tok;
+  }
+  return m;
+}
+
 function parseWords(text) {
   const words = []; let on = false;
-  for (const raw of text.split(/\s+/).filter(Boolean)) {
-    let tok = raw; let emph = on;
-    if (tok.startsWith('**')) { on = true; emph = true; tok = tok.slice(2); }
-    if (tok.endsWith('**')) { tok = tok.slice(0, -2); on = false; }
-    if (tok) words.push({ t: tok, emph });
+  const re = /\[([^\]]+)\]\{([^}]*)\}|(\S+?)\{([^}]*)\}|\S+/g;
+  const push = (raw, mod) => {
+    for (const w0 of raw.split(/\s+/).filter(Boolean)) {
+      let tok = w0; let emph = on;
+      if (tok.startsWith('**')) { on = true; emph = true; tok = tok.slice(2); }
+      if (tok.endsWith('**')) { tok = tok.slice(0, -2); on = false; }
+      if (tok) words.push(mod ? { t: tok, emph, mod } : { t: tok, emph });
+    }
+  };
+  let m;
+  while ((m = re.exec(text))) {
+    if (m[1] != null) push(m[1], parseMods(m[2]));
+    else if (m[3] != null) push(m[3], parseMods(m[4]));
+    else push(m[0], null);
   }
   return words;
+}
+
+// ---------- placement: a 3 x 3 board (columns A B C, rows 1 2 3) ----------
+
+const NAMED = {
+  full: [0, 2, 0, 2], left: [0, 0, 0, 2], right: [2, 2, 0, 2], top: [0, 2, 0, 0], bottom: [0, 2, 2, 2], middle: [0, 2, 1, 1],
+  center: [1, 1, 1, 1], centre: [1, 1, 1, 1], 'top-left': [0, 0, 0, 0], 'top-right': [2, 2, 0, 0], 'bottom-left': [0, 0, 2, 2],
+  'bottom-right': [2, 2, 2, 2], 'top-center': [1, 1, 0, 0], 'top-centre': [1, 1, 0, 0], 'bottom-center': [1, 1, 2, 2], 'bottom-centre': [1, 1, 2, 2],
+  'middle-left': [0, 0, 1, 1], 'middle-right': [2, 2, 1, 1], 'left-half': [0, 1, 0, 2], 'right-half': [1, 2, 0, 2],
+  'top-half': [0, 2, 0, 1], 'bottom-half': [0, 2, 1, 2], 'lower-third': [0, 2, 2, 2], 'upper-third': [0, 2, 0, 0],
+};
+const cell = (t) => [t.charCodeAt(0) & 31, Number(t[1])].map((v, i) => v - 1) ;
+/** "B2", "A1-B2", "left", "top-right" -> { c0, c1, r0, r1 } (inclusive, 0-based) or null. */
+export function parseRegion(str) {
+  if (str == null) return null;
+  const v = String(str).trim().toLowerCase().replace(/[_\s]+/g, '-');
+  if (NAMED[v]) { const [c0, c1, r0, r1] = NAMED[v]; return { c0, c1, r0, r1 }; }
+  const m = /^([abc][1-3])(?:-([abc][1-3]))?$/.exec(v);
+  if (!m) return null;
+  const a = cell(m[1]); const b = m[2] ? cell(m[2]) : a;
+  return { c0: Math.min(a[0], b[0]), c1: Math.max(a[0], b[0]), r0: Math.min(a[1], b[1]), r1: Math.max(a[1], b[1]) };
+}
+function regionBox(rg, safe) {
+  const cw = safe.w / 3; const rh = safe.h / 3;
+  const box = { x: safe.x + rg.c0 * cw, y: safe.y + rg.r0 * rh, w: (rg.c1 - rg.c0 + 1) * cw, h: (rg.r1 - rg.r0 + 1) * rh };
+  box.align = rg.c0 === rg.c1 && rg.c0 === 0 ? 'left' : rg.c0 === rg.c1 && rg.c0 === 2 ? 'right' : 'center';
+  box.anchorY = rg.r0 === rg.r1 && rg.r0 === 0 ? 'top' : rg.r0 === rg.r1 && rg.r0 === 2 ? 'bottom' : 'middle';
+  return box;
 }
 
 export function parseScript(text) {
@@ -172,12 +228,15 @@ export function parseScript(text) {
     else if ((m = /^\d+[.)]\s+(.*)$/.exec(body))) { role = 'bullet'; body = m[1]; }
     else if ((m = /^>\s*(.*)$/.exec(body))) { role = 'quote'; body = m[1]; }
     else if ((m = /^--\s*(.*)$/.exec(body))) { role = 'cite'; body = m[1]; }
+    let lineMod = null;
+    const lm = /\s+\{([^}]*)\}\s*$/.exec(body);
+    if (lm) { lineMod = parseMods(lm[1]); body = body.slice(0, lm.index); }
     const sc = open();
     const words = parseWords(body);
     if (!words.length) continue;
     if (t != null && sc.t == null && !sc.lines.length) sc.t = t;
     sc.src.push(ln);
-    sc.lines.push({ words, role, t: t != null && sc.lines.length ? t : null, t1, idx: ln, tag: t, tag1: t1 });
+    sc.lines.push({ words, role, t: t != null && sc.lines.length ? t : null, t1, idx: ln, tag: t, tag1: t1, ...(lineMod?.at ? { at: lineMod.at } : {}), ...(lineMod && Object.keys(lineMod).length ? { mod: lineMod } : {}) });
   }
   flush();
   return { options, scenes };
@@ -300,16 +359,17 @@ export function balanceRows(widths, space, maxW) {
 function blockAt(cx, lines, S, maxW, align) {
   const rows = []; let y = 0; let w = 0;
   lines.forEach((ln, li) => {
-    const px = S * ROLE_SCALE[ln.role];
+    const px = S * ROLE_SCALE[ln.role] * (ln.mod?.size ?? 1);
     const words = ln.words.map((x) => cx.text(ln.role, x.t));
-    const widths = words.map((t) => cx.width(t, ln.role, px));
+    const fs = ln.words.map((x) => x.mod?.size ?? 1);
+    const widths = words.map((t, k) => cx.width(t, ln.role, px * fs[k]));
     const space = cx.width(' ', ln.role, px) || px * 0.28;
     const brk = balanceRows(widths, space, maxW);
     if (li > 0) y += px * (ln.role === 'bullet' && lines[li - 1].role === 'bullet' ? 0.18 : 0.32);
     for (const [a, b] of brk) {
-      let rw = 0; for (let k = a; k < b; k++) rw += widths[k] + (k > a ? space : 0);
-      rows.push({ li, a, b, px, widths, space, rw, y: y + px * 0.5 * lineGap, words });
-      y += px * lineGap; w = Math.max(w, rw);
+      let rw = 0; let fm = 1; for (let k = a; k < b; k++) { rw += widths[k] + (k > a ? space : 0); fm = Math.max(fm, fs[k]); }
+      rows.push({ li, a, b, px, fs, widths, space, rw, y: y + px * fm * 0.5 * lineGap, words });
+      y += px * fm * lineGap; w = Math.max(w, rw);
     }
   });
   return { rows, h: y, w, align };
@@ -337,7 +397,7 @@ function placeBlock(cx, lines, b, box, { align = 'center', anchorY = 'middle', s
     const off = shift ? shift(ri, b.rows.length) : { dx: 0, dy: 0 };
     for (let k = row.a; k < row.b; k++) {
       const w = row.widths[k];
-      runs.push({ text: row.words[k], role: ln.role, li: row.li, wi: k, emph: ln.words[k].emph, size: row.px,
+      runs.push({ text: row.words[k], role: ln.role, li: row.li, wi: k, emph: ln.words[k].emph, size: row.px * (row.fs?.[k] ?? 1), mod: ln.words[k].mod,
         x: x + w / 2 + off.dx, y: y0 + row.y + off.dy, w, rot });
       x += w + row.space;
     }
@@ -574,20 +634,63 @@ export function compileScript(script, ctx) {
     const styleName = sc.dir.style && PACKS[sc.dir.style] ? sc.dir.style : packName;
     const SP = PACKS[styleName];
     const scx = styleName === packName ? cx : Ctx(ctx, styleName, { head: SP.head, body: SP.body });
-    const layoutName = chooseLayout(sc, SP, energy, prevLay, seed, i, allow);
+    // placement: scene-level region (::at / @at), plus lines / words that carry their own {at=..}
+    const sceneRg = parseRegion(sc.dir.at ?? (sc.dir.at === undefined ? opts.at : null));
+    let sbox = box; let salign = sc.dir.align ?? null;
+    if (sceneRg) { sbox = regionBox(sceneRg, box); sbox.cap = H * 0.22; salign ??= sbox.align; }
+    const mainLines = []; const map = [];
+    sc.lines.forEach((ln, li) => {
+      if (ln.at && parseRegion(ln.at)) return;
+      const ws = ln.words.filter((w) => !(w.mod?.at && parseRegion(w.mod.at)));
+      if (!ws.length) return;
+      mainLines.push(ws.length === ln.words.length ? ln : { ...ln, words: ws }); map.push(li);
+    });
+    const proxy = { ...sc, lines: mainLines };
+    const layoutName = mainLines.length ? chooseLayout(proxy, SP, energy, prevLay, seed, i, sceneRg && !sc.dir.layout ? ['center', 'left'] : allow) : 'center';
     prevLay = [layoutName, prevLay[0]];
-    let lay = LAYOUTS[layoutName](scx, sc, box, W, H);
-    let used = layoutName;
-    if (!lay) { lay = layoutCenter(scx, sc, box); used = 'center'; }
+    let lay = { runs: [] }; let used = layoutName;
+    if (mainLines.length) {
+      lay = sceneRg && !sc.dir.layout ? layoutCenter(scx, proxy, sbox, salign ?? 'center') : LAYOUTS[layoutName](scx, proxy, sbox, W, H);
+      if (!lay) { lay = layoutCenter(scx, proxy, sbox, salign ?? 'center'); used = 'center'; }
+      if (sbox.anchorY && sceneRg && lay.runs.length) {
+        const ys = lay.runs.filter((r) => !r.deco); const yt = Math.min(...ys.map((r) => r.y - r.size * 0.55)); const yb = Math.max(...ys.map((r) => r.y + r.size * 0.55));
+        const d = sbox.anchorY === 'top' ? sbox.y - yt : sbox.anchorY === 'bottom' ? sbox.y + sbox.h - yb : 0;
+        if (d) for (const r of lay.runs) r.y += d;
+      }
+      for (const r of lay.runs) if (r.li >= 0) r.li = map[r.li] ?? r.li;
+      for (const dc of lay.decor ?? []) if (dc.li != null) dc.li = map[dc.li] ?? dc.li;
+    }
     // keep everything inside the safe box
     const rs = lay.runs.filter((r) => !r.deco);
     if (rs.length) {
       const x0 = Math.min(...rs.map((r) => r.x - r.w / 2)); const x1 = Math.max(...rs.map((r) => r.x + r.w / 2));
       const y0 = Math.min(...rs.map((r) => r.y - r.size * 0.55)); const y1 = Math.max(...rs.map((r) => r.y + r.size * 0.55));
-      const k = Math.min(1, box.w / Math.max(1, x1 - x0), box.h / Math.max(1, y1 - y0));
+      const k = Math.min(1, sbox.w / Math.max(1, x1 - x0), sbox.h / Math.max(1, y1 - y0));
       if (k < 0.999) { const ox = (x0 + x1) / 2; const oy = (y0 + y1) / 2; for (const r of lay.runs) { r.x = ox + (r.x - ox) * k; r.y = oy + (r.y - oy) * k; r.size *= k; r.w *= k; } }
     }
     const pal = planPalette(SP, sc, i, seed, prevPal, ov); prevPal = pal.idx;
+    // lines and words with their own spot
+    sc.lines.forEach((ln, li) => {
+      const lrg = ln.at ? parseRegion(ln.at) : null;
+      if (lrg) {
+        const b = regionBox(lrg, box); b.cap = H * 0.2;
+        const one = { ...ln, words: ln.words.filter((w) => !(w.mod?.at && parseRegion(w.mod.at))) };
+        if (!one.words.length) return;
+        const { b: blk } = fitBlock(scx, [one], b, b.align);
+        for (const r of placeBlock(scx, [one], blk, b, { align: b.align, anchorY: b.anchorY })) lay.runs.push({ ...r, li });
+      }
+      ln.words.forEach((w, wi) => {
+        const wrg = w.mod?.at ? parseRegion(w.mod.at) : null;
+        if (!wrg || lrg) return;
+        const b = regionBox(wrg, box);
+        const ref = lay.runs.find((r) => r.li === li);
+        const size = (ref ? ref.size / (ref.mod?.size ?? 1) : Math.min(b.h * 0.5, H * 0.12)) * (w.mod.size ?? 1);
+        const text = scx.text(ln.role, w.t); const wd = scx.width(text, ln.role, size);
+        const x = b.align === 'left' ? b.x + wd / 2 : b.align === 'right' ? b.x + b.w - wd / 2 : b.x + b.w / 2;
+        const y = b.anchorY === 'top' ? b.y + size * 0.55 : b.anchorY === 'bottom' ? b.y + b.h - size * 0.55 : b.y + b.h / 2;
+        lay.runs.push({ text, role: ln.role, li, wi, emph: w.emph, size, x, y, w: wd, rot: 0, mod: w.mod });
+      });
+    });
 
     // timing of lines within the scene (reveal order); explicit line times win
     const t0 = start[i]; const d = dur[i];
@@ -607,16 +710,20 @@ export function compileScript(script, ctx) {
     const spring = { k: SP.spring.k * (0.7 + 0.6 * energy), z: SP.spring.z };
     const step = SP.step * (1.35 - 0.7 * energy);
     const lineCount = new Map();
-    const runs = lay.runs.map((r, idx) => {
+    const runs = lay.runs.map((r0, idx) => {
+      let r = r0;
       const li = r.li >= 0 ? r.li : 0;
       const ord = lineCount.get(li) ?? 0; lineCount.set(li, ord + 1);
-      const c = r.color ?? (r.emph && emphStyle === 'color' ? 'accent' : r.role === 'whisper' || r.role === 'cite' ? 'dim' : 'fg');
-      const onBar = r.emph && emphStyle === 'bar' && !r.deco;
+      if (!r.mod && !r.deco && sc.lines[li]) { const w = sc.lines[li].words.find((x) => x.mod && x.t.toLowerCase() === String(r.text).toLowerCase()); if (w) r = { ...r, mod: w.mod, size: r.size * (w.mod.size ?? 1) }; }
+      const mc = r.mod?.color;
+      const c = mc ?? r.color ?? (r.emph && emphStyle === 'color' ? 'accent' : r.role === 'whisper' || r.role === 'cite' ? 'dim' : 'fg');
+      const onBar = r.emph && emphStyle === 'bar' && !r.deco && !mc;
       let rt = lineT[li] + ord * step;
       if (reveal === 'line') rt = lineT[li] + ord * 0.02;
       else if (reveal === 'word') { const nW = sc.lines[li].words.length; const span = Math.max(0.2, lineEnds[li] - lineT[li]); rt = lineT[li] + ord * Math.min(0.9, (span * 0.8) / Math.max(1, nW)); }
+      rt += r.mod?.delay ?? 0;
       return { ...r, idx, font: scx.font(r.role), weight: scx.weight(r.role), color: onBar ? 'onAccent' : c,
-        t0: r.deco ? lineT[0] : rt, anim: { type: r.deco ? 'zoom' : inType, spring },
+        t0: r.deco ? lineT[0] : rt, anim: { type: r.deco ? 'zoom' : (IN_FOR[r.mod?.motion] ?? inType), spring },
         bar: onBar, phase: rnd(seed, 'ph', i, idx) * 6.283 };
     });
     // character-level reveal for short title runs when the scene asks for it (typewriter)
@@ -760,7 +867,7 @@ function sceneRuns(sc, t, W, H, pulse) {
   const out = []; const bars = [];
   for (const r of sc.runs) {
     const st = runState(r, t, sc, pulse, W, H); if (!st) continue;
-    const col = sc.pal[r.color] ?? sc.pal.fg;
+    const col = sc.pal[r.color] ?? (/^#[0-9a-f]{3,6}$/i.test(r.color) ? hexToRgb(r.color) : sc.pal.fg);
     const dim = r.color === 'dim' ? mixc(sc.pal.fg, sc.pal.bg, 0.45) : col;
     if (r.bar) {
       const e = spring(t - r.t0 - 0.05, 220, 0.9);

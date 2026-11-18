@@ -1,6 +1,7 @@
 import { Renderer } from '../js/renderer.js';
 import { GeneratedAsset } from '../js/assets.js';
 import { buildPlan, P, PROPERTY_COUNT } from '../js/animation.js';
+import { FX_KINDS } from '../js/effects.js';
 const out = {};
 try {
   const mk = (w, h, draw) => { const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d')); return c; };
@@ -69,6 +70,30 @@ try {
   await frame([dark, scr], [props({}), props({})], 0, 60); out.scriptLit = lit(snap());
   await frame([dark, scr], [props({}), props({})], 0, 60 + 30 * 3); out.scriptLit2 = lit(snap());
   await frame([dark, scr], [props({}), props({})], 0, 60 + 30 * 3 - 4); out.scriptTrans = lit(snap());
+
+  // ---- stacking audit: effects must overlay, not cover; order must be respected ----
+  const blue = { ...back, def: { id: 'bl', type: 'static' }, async textureSource() { return { image: await bmp(mk(8, 8, (g) => { g.fillStyle = '#3366aa'; g.fillRect(0, 0, 8, 8); })) }; } };
+  const near = (r, g, b) => Math.abs(r - 51) + Math.abs(g - 102) + Math.abs(b - 170) < 14;
+  const frac = () => { const d = snap(); let n = 0; for (let i = 0; i < d.length; i += 4) if (near(d[i], d[i + 1], d[i + 2])) n++; return n / (d.length / 4); };
+  out.fxCover = {};
+  for (const kind of Object.keys(FX_KINDS)) {
+    const fa = new GeneratedAsset({ id: `f_${kind}`, type: 'effect', fx: { kind } });
+    await frame([blue, fa], [props({}), props({})], 0, 45); out.fxCover[kind] = +frac().toFixed(2);
+  }
+  const rainA = new GeneratedAsset({ id: 'rn', type: 'effect', fx: { kind: 'rain' } });
+  const scrA = new GeneratedAsset({ id: 'sc', type: 'script', script: { text: '# Hello\nbig **words**', bgMode: 'none', place: 'full', pack: 'punchy', seed: 2 } });
+  const white = () => { const d = snap(); let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] > 200 && d[i + 2] > 200) n++; return n; };
+  await frame([blue, rainA, scrA], [props({}), props({}), props({})], 0, 60); out.stackA = { bg: +frac().toFixed(2), text: white() };
+  await frame([rainA, blue, scrA], [props({}), props({}), props({})], 0, 60); out.stackB = { bg: +frac().toFixed(2), text: white() };
+  await frame([rainA, scrA, blue], [props({}), props({}), props({})], 0, 60); out.stackC = { bg: +frac().toFixed(2), text: white() };
+  await frame([blue, scrA, rainA], [props({}), props({}), props({})], 0, 60); out.stackD = { bg: +frac().toFixed(2), text: white() };
+  const hid = props({}); hid[P.visible] = 0;
+  await frame([blue, rainA, scrA], [props({}), hid, props({})], 0, 60); out.hideRain = { bg: +frac().toFixed(2) };
+  await frame([blue, rainA, scrA], [props({}), props({}), hid], 0, 60); out.hideScript = { text: white() };
+  await frame([blue, rainA, scrA], [hid, props({}), props({})], 0, 60); out.hideBlue = { bg: +frac().toFixed(2) };
+  // semi-transparent image keeps what is underneath
+  const half = { ...back, def: { id: 'hf', type: 'static' }, async textureSource() { return { image: await bmp(mk(8, 8, (g) => { g.fillStyle = 'rgba(255,0,0,0.5)'; g.fillRect(0, 0, 8, 8); })) }; } };
+  await frame([blue, half], [props({}), props({})], 0, 5); out.halfOver = px(64, 64);
 
   // culling equality: an invisible layer must draw exactly what no layer draws
   await frame([dark, vis], [props({}), props({ visible: 0 })], 0, 10); const hidden = snap();

@@ -116,3 +116,29 @@ test('::reveal directive beats the script default', () => {
   const c = mk('::reveal line\n[0:01.0-0:05.0] one two three four', { reveal: 'word' });
   const u = c.scenes[0].runs.map((r) => r.t0); assert.ok(Math.max(...u) - Math.min(...u) < 0.2);
 });
+
+import { parseRegion, parseMods } from '../js/kinetic.js';
+test('regions: grid cells, spans, names', () => {
+  assert.deepEqual(parseRegion('A1'), { c0: 0, c1: 0, r0: 0, r1: 0 });
+  assert.deepEqual(parseRegion('c3'), { c0: 2, c1: 2, r0: 2, r1: 2 });
+  assert.deepEqual(parseRegion('A1-B2'), { c0: 0, c1: 1, r0: 0, r1: 1 });
+  assert.deepEqual(parseRegion('left'), { c0: 0, c1: 0, r0: 0, r1: 2 });
+  assert.deepEqual(parseRegion('top right'), { c0: 2, c1: 2, r0: 0, r1: 0 });
+  assert.equal(parseRegion('nowhere'), null);
+});
+test('mods parse', () => {
+  assert.deepEqual(parseMods('big accent at=C3 delay=.5'), { size: 1.5, color: 'accent', at: 'C3', delay: 0.5 });
+});
+test('::at puts the scene in its region', () => {
+  const c = mk('::at A1\nhello world');
+  for (const r of c.scenes[0].runs) assert.ok(r.x < 1280 / 3 + 5 && r.y < 720 / 3 + 5, `${r.x},${r.y}`);
+  const d = mk('::at right\nhello world'); for (const r of d.scenes[0].runs) assert.ok(r.x > 1280 * 0.6);
+});
+test('line {at} and word {at} placement, word styling', () => {
+  const c = mk('first line\nsecond line {at=C3}\nplain [big word]{size=2 color=#ff0000 delay=.4} end{at=A1}');
+  const runs = c.scenes[0].runs;
+  const sec = runs.filter((r) => r.li === 1); assert.ok(sec.length && sec.every((r) => r.x > 1280 * 0.6 && r.y > 720 * 0.6));
+  const end = runs.find((r) => r.text.toLowerCase() === 'end'); assert.ok(end.x < 1280 / 3 + 5 && end.y < 720 / 3 + 5);
+  const big = runs.find((r) => r.text.toLowerCase() === 'big'); assert.equal(big.color, '#ff0000');
+  const plain = runs.find((r) => r.text.toLowerCase() === 'plain'); assert.ok(big.size > plain.size * 1.5);
+});

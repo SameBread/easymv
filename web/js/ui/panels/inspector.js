@@ -77,7 +77,7 @@ export function createInspectorPanel(shell) {
     });
     const kids = [
       h('div.layer-title', h('span.kind-chip', icon(LAYER_TYPE_INFO[def.type]?.icon ?? 'image'), LAYER_TYPE_INFO[def.type]?.label ?? def.type), nameInput),
-      grid(order.el, bindSel(def, 'visualBlend', { label: 'Blend', options: [['normal', 'Normal'], ['add', 'Add (glow)'], ['multiply', 'Multiply']], def: 'normal', title: 'How this layer mixes with what is behind it' })),
+      grid(order.el, bindSel(def, 'visualBlend', { label: 'Blend', options: [['normal', 'Normal'], ['screen', 'Screen (soft glow)'], ['add', 'Add (strong glow, can wash out)'], ['multiply', 'Multiply']], def: 'normal', title: 'How this layer mixes with what is behind it' })),
     ];
     if (def.type === 'static' || def.type === 'gif' || def.type === 'frameSequence' || def.type === 'spriteSheet') {
       kids.push(bindToggle(def, 'background', 'Background layer', 'Automatic mode treats backgrounds differently (soft blur instead of beat pulses)'));

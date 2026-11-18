@@ -184,7 +184,7 @@ async function restore(snapStr) {
   normalize(p);
   await syncAssets();
   if (state.selected && !layerById(state.selected)) select(null);
-  if (resChanged && state.engine) await rebuildRenderer();
+  if (resChanged && state.canvas) await rebuildRenderer();
   structural();
 }
 
@@ -380,9 +380,19 @@ function dropCachedFor(fileName) {
 
 function takenIds() { return new Set(state.project.elements.map((e) => e.id)); }
 
+const OVERLAY_TYPES = new Set(['effect', 'visualizer', 'lyrics', 'script']);
+/** Where a new layer goes: overlays (effects, visualizers, captions, scripts) always on top; pictures just above the
+ *  topmost picture, so a new background never lands on top of your effects and text. */
+export function insertIndexFor(def, els = state.project.elements) {
+  if (OVERLAY_TYPES.has(def.type)) return els.length;
+  let top = -1;
+  els.forEach((e, i) => { if (!OVERLAY_TYPES.has(e.type)) top = i; });
+  return top + 1;
+}
+
 async function pushLayers(defs, label, select_ = true) {
   const p = state.project;
-  p.elements.push(...defs);
+  for (const d of defs) p.elements.splice(insertIndexFor(d), 0, d);
   normalize(p);
   await syncAssets();
   structural();
@@ -421,7 +431,7 @@ export async function addDemo() {
 export async function addVisualizer(presetIndex = 0) {
   const preset = VIS_PRESETS[presetIndex] ?? VIS_PRESETS[0];
   const id = uniqueId(slug(preset.name.toLowerCase()), takenIds());
-  const def = { id, name: preset.name, type: 'visualizer', vis: { ...VIS_DEFAULTS, ...preset.vis }, visualBlend: 'add' };
+  const def = { id, name: preset.name, type: 'visualizer', vis: { ...VIS_DEFAULTS, ...preset.vis }, visualBlend: 'screen' };
   await pushLayers([def], `Add ${preset.name}`);
 }
 
@@ -463,7 +473,7 @@ export async function addScriptDemo(kind) {
     const fxId = uniqueId('rain', takenIds());
     const info = FX_KINDS.rain; const { area, blend, y, ...rest } = info.defaults;
     const bg = { id: fxId, name: 'Demo rain', type: 'effect', fx: { ...FX_COMMON, kind: 'rain', ...rest, area }, visualBlend: blend, base: {} };
-    state.project.elements.push(bg);
+    await pushLayers([bg], 'Add rain', false);
     const id = await addScript(DEMO_LYRICS, 'lyrics', 'Demo lyrics');
     const def = layerById(id); def.script.pack = 'smooth'; def.script.seed = 3;
     structural(); commit('Add lyrics demo');
@@ -859,7 +869,7 @@ export function recompile() {
 
 export async function setResolution(w, h) {
   state.project.resolution = [even(w), even(h)];
-  if (state.engine) await rebuildRenderer();
+  if (state.canvas) await rebuildRenderer();
   structural(); commit('Change resolution');
 }
 
@@ -921,6 +931,7 @@ async function adoptProject(p, bundleFiles) {
   state.project = p;
   state.selected = null;
   await syncAssets();
+  if (state.canvas) await rebuildRenderer();
   resetHistory();
   emit('selection');
   structural();
@@ -961,7 +972,7 @@ export async function rebuildRenderer() {
   emit('renderer');
 }
 
-export function attachCanvas(canvas) { state.canvas = canvas; }
+export function attachCanvas(canvas) { state.canvas = canvas; rebuildRenderer(); }
 
 /** Without a song there is no engine: show layers at their own values (base plus timeline) so you can still compose. */
 function baseOnlyView(f) {
@@ -972,6 +983,17 @@ function baseOnlyView(f) {
     return t ? TL.valueAt(t, f) : baseValue(id, name);
   } };
 }
+
+/** The layer's own Show/Hide switch is authoritative when it has no visibility keyframes, whatever the engine last saw. */
+function visibilityAuthority(view) {
+  const els = state.project.elements;
+  const hid = els.map((e) => !trackOf(e.id, 'visible'));
+  return { get: (e, q) => {
+    if (q === P_VISIBLE && hid[e]) return (els[e].base?.visible ?? 1) >= 0.5 ? 1 : 0;
+    return view.get(e, q);
+  } };
+}
+const P_VISIBLE = PROPERTY_NAMES.indexOf('visible');
 
 async function drawFrame(f) {
   if (!state.renderer) return;
@@ -990,6 +1012,7 @@ async function drawFrame(f) {
     state.frameValues = Float32Array.from({ length: n * PROPERTY_COUNT }, (_, i) => view.get(Math.floor(i / PROPERTY_COUNT), i % PROPERTY_COUNT));
   }
   state.renderer.audio = audioProvider();
+  view = visibilityAuthority(view);
   const plan = buildPlan(state.assets, view, f, fps());
   await state.renderer.prepare(plan);
   state.renderer.draw(plan);
@@ -1013,8 +1036,25 @@ export function seek(f) {
   emit('frame', { frame: state.frame, seek: true });
 }
 
+export const transport = { loop: false, rate: 1 };
+
 export async function play() {
-  if (!state.bridge || state.playing) return;
+  if (state.playing) return;
+  const rate = fps();
+  if (!state.bridge) {
+    // no song yet: a silent clock so layers, scripts and effects can still be previewed
+    state.playing = true; emit('transport');
+    const t0 = performance.now(); const f0 = state.frame;
+    const tick = () => {
+      if (!state.playing || state.bridge) return;
+      const f = f0 + Math.floor(((performance.now() - t0) / 1000) * rate * transport.rate);
+      if (f >= totalFrames()) { if (transport.loop) { stop(); seek(0); play(); } else { stop(); seek(0); } return; }
+      if (f !== state.frame) { state.frame = f; drawSoon(); emit('frame', { frame: f }); }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    return;
+  }
   const info = state.bridge.masterInfo;
   audioCtx ??= new AudioContext();
   await audioCtx.resume();
@@ -1025,24 +1065,34 @@ export async function play() {
     for (let i = 0; i < info.frames; i++) plane[i] = pcm[i * info.channels + c];
     buf.copyToChannel(plane, c);
   }
-  const rate = fps();
   const offset = state.frame / rate;
   audioSrc = audioCtx.createBufferSource();
   audioSrc.buffer = buf;
+  audioSrc.playbackRate.value = transport.rate;
   audioSrc.connect(audioCtx.destination);
-  playStart = audioCtx.currentTime - offset;
+  playStart = audioCtx.currentTime - offset / transport.rate;
   audioSrc.start(0, offset);
   state.playing = true;
   emit('transport');
   const tick = () => {
     if (!state.playing) return;
-    const f = Math.floor((audioCtx.currentTime - playStart) * rate);
-    if (f >= totalFrames()) { stop(); seek(0); return; }
+    const f = Math.floor((audioCtx.currentTime - playStart) * rate * transport.rate);
+    if (f >= totalFrames()) { stop(); seek(0); if (transport.loop) play(); return; }
     if (f !== state.frame) { state.frame = f; drawSoon(); }
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
 }
+
+/** Jump relative to now by seconds (keeps playing). */
+export function skip(sec) {
+  const was = state.playing;
+  if (was) stop();
+  seek(state.frame + Math.round(sec * fps()));
+  if (was) play();
+}
+export function setSpeed(r) { transport.rate = r; if (state.playing) { stop(); play(); } emit('transport'); }
+export function setLoop(v) { transport.loop = !!v; emit('transport'); }
 
 export function stop() {
   const was = state.playing;

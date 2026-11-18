@@ -122,7 +122,7 @@ export function createScriptPanel(shell) {
           h('button.btn.text', { type: 'button', title: 'Make a closed-captions layer with the same lines', onclick: async () => { const id = await core.scriptToCaptions(def.id); if (id) { core.toast('Captions layer created.'); shell.showPanel('lyrics'); } } }, icon('closed_caption'), 'To captions')),
         lrcIn,
         h('details.script-help', h('summary', 'Syntax cheat sheet'),
-          h('pre', '# Title       ## Subtitle\n- bullet      > quote   -- author\n**word**     emphasise (CAPS and numbers too)\nblank line or ---   next scene\n[0:12.5] line         starts at 12.5 s\n[0:12.5-0:15] line    starts and ends\n::dur 4  ::layout stack  ::trans push\n::reveal word  ::style retro  ::bg #123456'))),
+          h('pre', '# Title       ## Subtitle\n- bullet      > quote   -- author\n**word**     emphasise (CAPS and numbers too)\nblank line or ---   next scene\n[0:12.5] line         starts at 12.5 s\n[0:12.5-0:15] line    starts and ends\n::dur 4  ::layout stack  ::trans push\n::reveal word  ::style retro  ::bg #123456\n\nPLACEMENT (3×3 board, columns A B C, rows 1 2 3)\n::at B2   ::at A1-B2   ::at left   ::at top-right\n::align left|center|right\nline text {at=C3}          whole line to a spot\nword{big}  [two words]{size=1.6 color=accent at=A1 delay=.4 motion=pop}\nnames: left right top bottom middle center top-left …'))),
     ];
   }
 

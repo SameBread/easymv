@@ -367,6 +367,7 @@ export class Renderer {
   _setBlend(mode) {
     const gl = this.gl;
     if (mode === 'add') gl.blendFunc(gl.ONE, gl.ONE);
+    else if (mode === 'screen') gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_COLOR);
     else if (mode === 'multiply') gl.blendFunc(gl.DST_COLOR, gl.ONE_MINUS_SRC_ALPHA);
     else gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // premultiplied "over"
   }
@@ -588,13 +589,20 @@ export class Renderer {
     if (!it.scr) return;
     const gl = this.gl; const { props } = it;
     const vp = gl.getParameter(gl.VIEWPORT); const k = vp[2] / this.width;
+    // placement: the whole script block can be moved / scaled / rotated like any other layer
+    const W = this.width; const H = this.height; const cx = W / 2; const cy = H / 2;
+    const tx = (props[P.positionX] - 0.5) * W; const ty = (props[P.positionY] - 0.5) * H;
+    const ssx = props[P.scale] * props[P.scaleX]; const ssy = props[P.scale] * props[P.scaleY];
+    const rot = props[P.rotation]; const cr = Math.cos(rot); const sr = Math.sin(rot);
+    const ident = tx === 0 && ty === 0 && ssx === 1 && ssy === 1 && rot === 0;
+    const xf = (x, y) => { const dx = (x - cx) * ssx; const dy = (y - cy) * ssy; return [cx + tx + cr * dx - sr * dy, cy + ty + sr * dx + cr * dy]; };
     for (const pass of it.scr.passes) {
-      const rects = pass.scissors;
+      const rects = ident ? pass.scissors : (rot === 0 ? pass.scissors?.map(([x0, y0, x1, y1]) => { const a = xf(x0, y0); const b = xf(x1, y1); return [a[0], a[1], b[0], b[1]]; }) : null);
       const run = () => {
         const g = pass.geo;
         if (g.n) {
           const inter = new Float32Array(g.n * 6);
-          for (let i = 0; i < g.n; i++) { inter[i * 6] = g.pos[i * 2]; inter[i * 6 + 1] = g.pos[i * 2 + 1]; inter.set(g.col.subarray(i * 4, i * 4 + 4), i * 6 + 2); }
+          for (let i = 0; i < g.n; i++) { const [px, py] = ident ? [g.pos[i * 2], g.pos[i * 2 + 1]] : xf(g.pos[i * 2], g.pos[i * 2 + 1]); inter[i * 6] = px; inter[i * 6 + 1] = py; inter.set(g.col.subarray(i * 4, i * 4 + 4), i * 6 + 2); }
           const { p, u } = this.visProg;
           gl.useProgram(p);
           gl.uniform2f(u.uCanvas, this.width, this.height);
@@ -609,7 +617,8 @@ export class Renderer {
         for (const r of pass.runs) {
           const e = this.textTex.get(r.key); if (!e || r.alpha <= 0.001) continue;
           const sc = r.size / Math.max(8, Math.round(r.size));
-          this._quad(e.tex, 1, r.clip, r.x, r.y, e.w * sc * r.sx, e.h * sc * r.sy, r.rot, props, props[P.opacity] * r.alpha);
+          const [qx, qy] = ident ? [r.x, r.y] : xf(r.x, r.y);
+          this._quad(e.tex, 1, r.clip, qx, qy, e.w * sc * r.sx * ssx, e.h * sc * r.sy * ssy, r.rot + rot, props, props[P.opacity] * r.alpha);
         }
       };
       if (rects) {

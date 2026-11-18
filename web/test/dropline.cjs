@@ -1,0 +1,22 @@
+const { chromium } = require('playwright');
+const http = require('http'), fs = require('fs'), path = require('path');
+const web = path.join(__dirname, '..');
+const srv = http.createServer((q, s) => { const url = decodeURIComponent(q.url.split('?')[0]);
+  const f = url.startsWith('/pkg/') ? path.join(__dirname, 'mock-pkg', url.slice(5)) : path.join(web, url === '/' ? 'index.html' : url);
+  fs.readFile(f, (e, d) => { if (e) { s.writeHead(404); s.end(); return; } s.writeHead(200, { 'content-type': /\.m?js$/.test(f) ? 'text/javascript' : /\.css$/.test(f) ? 'text/css' : /woff2/.test(f) ? 'font/woff2' : 'text/html' }); s.end(d); }); }).listen(0, async () => {
+  const b = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+  const pg = await (await b.newContext({ viewport: { width: 1440, height: 860 } })).newPage();
+  await pg.goto(`http://127.0.0.1:${srv.address().port}/index.html`);
+  await pg.waitForFunction(() => window.easymv && !document.getElementById('boot'));
+  await pg.evaluate(async () => { await easymv.core.addDemo(); await easymv.core.addScriptDemo('lyrics'); });
+  await pg.waitForTimeout(600);
+  const rows = pg.locator('.panel-layers .layer-row'); const n = await rows.count();
+  const r0 = await rows.nth(0).boundingBox(); const r1 = await rows.nth(1).boundingBox();
+  await pg.mouse.move(r0.x + 20, r0.y + r0.height / 2); await pg.mouse.down();
+  await pg.mouse.move(r0.x + 20, r1.y + r1.height * 0.9, { steps: 6 });
+  const line = await pg.locator('.drop-line').boundingBox();
+  const target = r1.y + r1.height;
+  const ok = line && Math.abs(line.y - target) < 12;
+  console.log(ok ? 'PASS' : 'FAIL', 'drop line near the gap', line?.y, target, n);
+  await pg.mouse.up(); await b.close(); srv.close(); process.exit(ok ? 0 : 1);
+});

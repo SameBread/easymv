@@ -390,6 +390,24 @@ mod tests {
     }
 
     #[test]
+    fn hiding_via_update_base_zeroes_visible_slot() {
+        let clicks = click_track(2.0, 1.0);
+        let mut p = project("");
+        let mut c = build(&p, &clicks, &clicks);
+        c.compile(&p).unwrap();
+        c.evaluate_batch(0, 1);
+        assert_eq!(c.output()[16], 1.0);
+        p.elements[0].base.insert("visible".into(), 0.0);
+        c.update_base(&p).unwrap();
+        c.evaluate_batch(0, 1);
+        assert_eq!(c.output()[16], 0.0);
+        p.elements[0].base.insert("visible".into(), 1.0);
+        c.update_base(&p).unwrap();
+        c.evaluate_batch(0, 1);
+        assert_eq!(c.output()[16], 1.0);
+    }
+
+    #[test]
     fn update_base_changes_output_without_recompile() {
         let clicks = click_track(2.0, 1.0);
         let mut p = project("");

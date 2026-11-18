@@ -11,6 +11,7 @@ function geometry(item, cw, ch) {
   let bw; let bh; let offY = 0;
   if (item.kind === 'visualizer') { const e = visExtent(visSettings(asset.def), Math.min(cw, ch)); bw = e.w; bh = e.h; }
   else if (item.kind === 'effect') { const f = fxSettings(asset.def); bw = f.area[0] * cw; bh = f.area[1] * ch; }
+  else if (item.kind === 'script') { bw = cw; bh = ch; }
   else if (item.kind === 'lyrics') {
     const l = lyricsSettings(asset.def);
     bw = l.style.maxWidth * cw; bh = l.style.size * ch * 2.6;
@@ -48,13 +49,19 @@ export function pointInItem(item, x, y, cw, ch) {
 
 /** Topmost visible item under (x, y) in canvas pixels. `plan` is z-sorted ascending. */
 export function hitTest(plan, x, y, cw, ch) {
+  // a full-canvas script block would swallow every click, so it only counts when nothing else is under the pointer
+  let script = null;
   for (let i = plan.length - 1; i >= 0; i--) {
     const it = plan[i];
     if (it.props[P.opacity] < 0.02) continue; // invisible right now: not clickable
+    if (it.kind === 'script') { script ??= it; continue; }
     if (pointInItem(it, x, y, cw, ch)) return it;
   }
-  return null;
+  return script;
 }
+
+/** Quad centre in canvas px. */
+export const itemCenter = (item, cw, ch) => { const q = itemQuad(item, cw, ch); return [(q[0][0] + q[2][0]) / 2, (q[0][1] + q[2][1]) / 2]; };
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 

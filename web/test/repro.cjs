@@ -1,0 +1,28 @@
+const { chromium } = require('playwright');
+const http = require('http'), fs = require('fs'), path = require('path');
+const web = path.join(__dirname, '..'); const out = process.argv[2];
+const wav = Buffer.alloc(64); wav.write('RIFF', 0);
+const srv = http.createServer((q, s) => { const url = decodeURIComponent(q.url.split('?')[0]);
+  const f = url.startsWith('/pkg/') ? path.join(__dirname, 'mock-pkg', url.slice(5)) : path.join(web, url === '/' ? 'index.html' : url);
+  fs.readFile(f, (e, d) => { if (e) { s.writeHead(404); s.end(); return; } s.writeHead(200, { 'content-type': /\.m?js$/.test(f) ? 'text/javascript' : /\.css$/.test(f) ? 'text/css' : /woff2/.test(f) ? 'font/woff2' : 'text/html' }); s.end(d); }); }).listen(0, async () => {
+  const b = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+  const pg = await (await b.newContext({ viewport: { width: 1440, height: 860 } })).newPage();
+  pg.on('pageerror', (e) => console.log('pageerror', e.message));
+  await pg.goto(`http://127.0.0.1:${srv.address().port}/index.html`);
+  await pg.waitForFunction(() => window.easymv && !document.getElementById('boot'));
+  const E = (f, a) => pg.evaluate(f, a);
+  await E(() => easymv.core.addDemo());
+  await pg.waitForTimeout(800);
+  await E(() => easymv.core.addScriptDemo('lyrics'));
+  await pg.waitForTimeout(800);
+  const info = () => E(() => ({ els: easymv.core.state.project.elements.map((e) => e.id + ':' + e.type + ':' + (e.base?.visible ?? 1)), assets: easymv.core.state.assets.map((a) => a?.def?.id), plan: easymv.core.state.lastPlan?.map((p) => p.asset.def.id) }));
+  console.log('renderer', await E(() => !!easymv.core.state.renderer), await E(() => easymv.core.state.frame));
+  await pg.screenshot({ path: `${out}/ns0.png` });
+  const plan = () => E(() => easymv.core.state.lastPlan?.map((p) => p.asset.def.id));
+  console.log('nosong', JSON.stringify(await plan()), await E(() => !!easymv.core.state.bridge));
+  await pg.click('.panel-layers .layer-row:nth-child(2) button[aria-label="Toggle visibility"]'); await pg.waitForTimeout(600);
+  console.log('after hide rain', JSON.stringify(await plan()));
+  await pg.click('.panel-layers .layer-row:nth-child(3) button[aria-label="Toggle visibility"]'); await pg.waitForTimeout(600);
+  console.log('after hide 3rd', JSON.stringify(await plan()), JSON.stringify(await E(() => easymv.core.state.project.elements.map((e) => [e.id, e.base?.visible]))));
+  await b.close(); srv.close();
+});

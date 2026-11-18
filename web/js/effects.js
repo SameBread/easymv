@@ -7,12 +7,12 @@
 
 export const FX_KINDS = {
   snow:      { label: 'Snow',        icon: 'ac_unit',               id: 0, defaults: { count: 400, size: 14, speed: 1, wind: 0.15, c1: '#ffffff', c2: '#cfe8ff', area: [1, 1], blend: 'normal' } },
-  dust:      { label: 'Dust',        icon: 'blur_on',               id: 1, defaults: { count: 220, size: 10, speed: 1, wind: 0.1, c1: '#fff1d0', c2: '#ffd9a0', area: [1, 1], blend: 'add' } },
-  glitter:   { label: 'Glitter',     icon: 'auto_awesome',          id: 2, defaults: { count: 160, size: 26, speed: 1, wind: 0, c1: '#fff7c2', c2: '#ff9bd2', area: [1, 1], blend: 'add' } },
-  sparks:    { label: 'Sparks',      icon: 'bolt',                  id: 3, defaults: { count: 220, size: 12, speed: 1, wind: 0, c1: '#ffd166', c2: '#ff3b1f', area: [0.5, 0.8], blend: 'add', y: 0.9 } },
+  dust:      { label: 'Dust',        icon: 'blur_on',               id: 1, defaults: { count: 220, size: 10, speed: 1, wind: 0.1, c1: '#fff1d0', c2: '#ffd9a0', area: [1, 1], blend: 'screen' } },
+  glitter:   { label: 'Glitter',     icon: 'auto_awesome',          id: 2, defaults: { count: 160, size: 26, speed: 1, wind: 0, c1: '#fff7c2', c2: '#ff9bd2', area: [1, 1], blend: 'screen' } },
+  sparks:    { label: 'Sparks',      icon: 'bolt',                  id: 3, defaults: { count: 220, size: 12, speed: 1, wind: 0, c1: '#ffd166', c2: '#ff3b1f', area: [0.5, 0.8], blend: 'screen', y: 0.9 } },
   confetti:  { label: 'Confetti',    icon: 'celebration',           id: 4, defaults: { count: 180, size: 18, speed: 1, wind: 0.1, c1: '#ff6b9d', c2: '#6bd5ff', area: [1, 1], blend: 'normal' } },
   rain:      { label: 'Rain',        icon: 'water_drop',            id: 5, defaults: { count: 420, size: 16, speed: 1, wind: 0.25, c1: '#bcd7ff', c2: '#7aa7ff', area: [1, 1], blend: 'normal' } },
-  bubbles:   { label: 'Bubbles',     icon: 'bubble_chart',          id: 6, defaults: { count: 60, size: 46, speed: 1, wind: 0, c1: '#bfeaff', c2: '#ffffff', area: [1, 1], blend: 'add' } },
+  bubbles:   { label: 'Bubbles',     icon: 'bubble_chart',          id: 6, defaults: { count: 60, size: 46, speed: 1, wind: 0, c1: '#bfeaff', c2: '#ffffff', area: [1, 1], blend: 'screen' } },
   pixelFire: { label: 'Pixel fire',  icon: 'local_fire_department', id: 7, defaults: { count: 1, size: 10, speed: 1, wind: 0, c1: '#ffe27a', c2: '#c1250e', area: [1, 0.42], blend: 'normal', y: 0.88, pixel: 10 } },
 };
 export const FX_IDS = Object.keys(FX_KINDS);
