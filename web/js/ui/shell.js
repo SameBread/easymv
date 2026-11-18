@@ -20,7 +20,7 @@ const PANELS = [
   { id: 'inspector', title: 'Inspector', icon: 'tune', make: createInspectorPanel },
   { id: 'timeline', title: 'Timeline', icon: 'timeline', make: createTimelinePanel },
   { id: 'signals', title: 'Signals', icon: 'graphic_eq', make: createSignalsPanel },
-  { id: 'lyrics', title: 'Lyrics', icon: 'lyrics', make: createLyricsPanel },
+  { id: 'lyrics', title: 'Captions', icon: 'closed_caption', make: createLyricsPanel },
   { id: 'script', title: 'Script', icon: 'slideshow', make: createScriptPanel },
 ];
 const PHONE_NAV = ['layers', 'inspector', 'timeline', 'signals', 'lyrics', 'script'];
@@ -37,7 +37,7 @@ const BUILTIN = {
     add('timeline', 'preview', 'below', { h: 340 }); add('signals', 'inspector', 'within');
     return ['inspector'];
   },
-  Lyrics: (add) => {
+  Captions: (add) => {
     add('preview'); add('lyrics', 'preview', 'right', { w: 420 }); add('layers', 'preview', 'left', { w: 220 });
     add('timeline', 'preview', 'below', { h: 240 }); add('inspector', 'lyrics', 'within');
     return ['lyrics'];
@@ -115,8 +115,14 @@ export function createShell(root, dv) {
       { separator: true },
       { label: 'Visualizer', icon: 'graphic_eq', submenu: VIS_PRESETS.map((p, i) => ({ label: p.label ?? p.name, run: () => core.addVisualizer(i) })) },
       { label: 'Effect', icon: 'auto_awesome', submenu: FX_IDS.map((k) => ({ label: FX_KINDS[k].label, icon: FX_KINDS[k].icon, run: () => core.addEffect(k) })) },
-      { label: 'Lyrics', icon: 'lyrics', run: () => core.addLyrics() },
-      { label: 'Script / presentation', icon: 'slideshow', run: async () => { await core.addScript(); shell.showPanel('script'); } },
+      { label: 'Closed captions (CC)', icon: 'closed_caption', run: () => core.addLyrics() },
+      { label: 'Script (kinetic text)', icon: 'slideshow', submenu: [
+        { label: 'Presentation / explainer', icon: 'slideshow', run: async () => { await core.addScript(undefined, 'presentation'); shell.showPanel('script'); } },
+        { label: 'Lyrics over a background', icon: 'lyrics', run: async () => { await core.addScript(undefined, 'lyrics'); shell.showPanel('script'); } },
+        { separator: true },
+        { label: 'Demo: presentation (Marxism)', icon: 'auto_fix_high', run: async () => { await core.addScriptDemo('presentation'); shell.showPanel('script'); } },
+        { label: 'Demo: lyrics (song + rain)', icon: 'auto_fix_high', run: async () => { await core.addScriptDemo('lyrics'); shell.showPanel('script'); } },
+      ] },
     ];
   }
   const sel = () => state.selected && core.layerById(state.selected);
@@ -170,7 +176,7 @@ export function createShell(root, dv) {
     next: C('next', 'Next frame', () => core.seek(state.frame + 1), { shortcut: '→' }),
     start: C('start', 'Go to start', () => core.seek(0), { shortcut: 'Home' }),
     key: C('key', 'Keyframe selected property…', () => {}, {}),
-    tap: C('tap', 'Tap lyric line', () => instance('lyrics').tap?.(), { shortcut: 'T' }),
+    tap: C('tap', 'Tap caption or script line', () => { const d = state.selected && core.layerById(state.selected); (d?.type === 'script' ? instance('script') : instance('lyrics')).tap?.(); }, { shortcut: 'T' }),
   };
   const shortcuts = [
     ['Space', 'Play / pause'], ['← / →', 'Previous / next frame (Shift: 10 frames)'], ['Home', 'Go to start'], ['Ctrl+Z / Ctrl+Shift+Z', 'Undo / redo'],
@@ -424,11 +430,12 @@ export function createShell(root, dv) {
 
   const helpDialog = () => dialog({ title: 'Quick start', wide: true, body: [
     h('ol.help', h('li', 'Choose a song (Audio → Choose song). It is analyzed in your browser; nothing is uploaded.'),
-      h('li', 'Add layers with the + button in Layers: images, a visualizer wrapped around a shape, effects like snow or pixel fire, or lyrics.'),
+      h('li', 'Add layers with the + button in Layers: images, a visualizer wrapped around a shape, effects like snow or pixel fire, or closed captions and kinetic-text scripts.'),
       h('li', 'Select a layer. In the Inspector, press the link icon next to a property to make it follow a sound, or drag a signal in from the Signals panel.'),
       h('li', 'Use the diamond next to a property to keyframe it at the playhead. Keyframes can replace the sound, blend with it or mix.'),
       h('li', 'In the Timeline, drag the green bars to decide when each layer is on screen. Hidden layers cost nothing to render.'),
-      h('li', 'Lyrics: paste words, press play and tap T on each line (or import an LRC file).'),
+      h('li', 'Closed captions (CC): paste words, press play and tap T on each line, or import an LRC file. Hold the tap button to set how long a caption stays.'),
+      h('li', 'Script: write an outline and get animated, automatically laid-out scenes. Use it for presentations, or switch to "Lyrics over a background" for song text with word-by-word reveal. Try Add → Script → Demo.'),
       h('li', 'Window → Workspaces switches layouts. Drag panel tabs to rearrange, then Save workspace as…')),
     h('p.muted', 'Tip: Quick start adds a demo layer and automatic sound links so you can see something moving right away.')], actions: [{ label: 'Close', variant: 'filled' }] });
   const shortcutsDialog = () => dialog({ title: 'Keyboard shortcuts', body: [h('dl.keys', shortcuts.flatMap(([k, d]) => [h('dt', h('kbd', k)), h('dd', d)]))], actions: [{ label: 'Close', variant: 'filled' }] });

@@ -187,9 +187,9 @@ export function createInspectorPanel(shell) {
 
   function lyricsSection(def) {
     const n = def.lyrics?.lines?.length ?? 0;
-    return section('Lyrics', 'lyrics',
-      h('div.note', n ? `${n} line${n === 1 ? '' : 's'}. Edit text, timing and style in the Lyrics panel.` : 'No lines yet. Open the Lyrics panel to paste words and tap along to the song.'),
-      h('div.row', h('button.btn.tonal', { type: 'button', onclick: () => shell.showPanel('lyrics') }, icon('lyrics'), 'Open Lyrics panel')));
+    return section('Closed captions', 'closed_caption',
+      h('div.note', n ? `${n} line${n === 1 ? '' : 's'}. Edit text, timing and style in the Captions panel.` : 'No lines yet. Open the Captions panel to paste words and tap along to the song.'),
+      h('div.row', h('button.btn.tonal', { type: 'button', onclick: () => shell.showPanel('lyrics') }, icon('closed_caption'), 'Open Captions panel')));
   }
 
   // ---------- property rows ----------
@@ -383,7 +383,7 @@ export function createInspectorPanel(shell) {
     if (def.type === 'visualizer') element.append(visualizerSection(def));
     else if (def.type === 'effect') element.append(effectSection(def));
     else if (def.type === 'lyrics') element.append(lyricsSection(def));
-    else if (def.type === 'script') element.append(section('Script', 'lyrics', h('div.row', h('button.btn.tonal', { type: 'button', onclick: () => shell.showPanel('script') }, icon('lyrics'), 'Open Script panel'))));
+    else if (def.type === 'script') element.append(section('Script', 'slideshow', h('div.note', 'Text, timing, style, background and fonts are in the Script panel. Opacity and blend below work like any layer.'), h('div.row', h('button.btn.tonal', { type: 'button', onclick: () => shell.showPanel('script') }, icon('slideshow'), 'Open Script panel'))));
     else element.append(imageSection(def, asset));
 
     const props = propsFor(def.type).filter((p) => showAdvanced || !p.advanced);

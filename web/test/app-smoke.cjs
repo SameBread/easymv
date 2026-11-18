@@ -80,7 +80,7 @@ const srv = http.createServer((q, s) => {
     check('glitter effect added with starter sound links', await E(() => easymv.core.state.project.connections.filter((c) => easymv.core.layerById(c.element)?.type === 'effect').length) >= 1);
     check('inspector shows effect kinds', (await n('.panel-inspector .chip')) >= 8);
     await menu('Layer', 'New layer');
-    await pg.click('.submenu .menu-item:has(.mi-label:text-is("Lyrics"))');
+    await pg.click('.submenu .menu-item:has(.mi-label:text-is("Closed captions (CC)"))');
     await until(() => easymv.core.state.project.elements.length === 5);
 
     // Lyrics panel: add lines, tap one, export LRC
@@ -212,6 +212,43 @@ const srv = http.createServer((q, s) => {
     await until(() => !easymv.core.canUndo());
     check('loading a bundle resets undo history', await pg.locator('.topbar .icon-btn[aria-label^="Undo"]').isDisabled());
     fs.unlinkSync(bundlePath);
+
+    // Script layer: demos, tabs, scrolling, timing rows, scene locks, conversions
+    await menu('Layer', 'New layer');
+    await pg.click('.submenu .menu-item:has(.mi-label:text-is("Script (kinetic text)"))');
+    await pg.click('.submenu >> nth=1 >> .menu-item:has(.mi-label:text-is("Demo: lyrics (song + rain)"))');
+    await until(() => easymv.core.state.project.elements.some((e) => e.type === 'script'));
+    await until(() => document.querySelector('.panel-script .sp-tabs'));
+    check('lyrics demo adds a transparent script layer over an effect', await E(() => { const e = easymv.core.state.project.elements; const sc = e.find((x) => x.type === 'script'); return sc.script.bgMode === 'none' && sc.script.reveal === 'word' && e.some((x) => x.type === 'effect' && x.id.startsWith('rain')); }));
+    check('script panel has four tabs', (await n('.panel-script .sp-tab')) === 4);
+    await pg.click('.panel-script .sp-tab:has-text("Look")');
+    const sc1 = await E(() => { const b = document.querySelector('.panel-script .sp-body'); return { sh: b.scrollHeight, ch: b.clientHeight }; });
+    check('Look tab is taller than the panel (needs scrolling)', sc1.sh > sc1.ch, JSON.stringify(sc1));
+    await pg.locator('.panel-script .sp-body').hover();
+    await pg.mouse.wheel(0, 400);
+    await until(() => document.querySelector('.panel-script .sp-body').scrollTop > 50);
+    check('mouse wheel scrolls the script panel', true);
+    await pg.click('.panel-script .sp-tab:has-text("Timing")');
+    await until(() => document.querySelectorAll('.panel-script .line-row').length >= 20);
+    check('timing tab lists every lyric line with start and end', (await n('.panel-script .line-row .time-input')) >= 40);
+    await pg.click('.panel-script .sp-tab:has-text("Scenes")');
+    await until(() => document.querySelectorAll('.panel-script .scene-card').length >= 10);
+    await pg.locator('.panel-script .scene-card select[aria-label="Scene 2 Layout"]').selectOption('stack');
+    await until(() => easymv.core.state.project.elements.find((x) => x.type === 'script').script.text.includes('::layout stack'));
+    check('scene layout lock is written into the script text', true);
+    await pg.click('.panel-script .sp-tab:has-text("Write")');
+    await pg.locator('.panel-script .seg-btn:has-text("Presentation")').click();
+    await until(() => easymv.core.state.project.elements.find((x) => x.type === 'script').script.bgMode === 'scenes');
+    check('mode switch applies the presentation preset', true);
+    await E(() => easymv.core.addScriptDemo('presentation'));
+    check('presentation demo adds the Marxism script', await E(() => easymv.core.state.project.elements.some((x) => x.type === 'script' && x.script.text.includes('Marxism'))));
+    const cid = await E(async () => { let l = easymv.core.state.project.elements.find((x) => x.type === 'lyrics'); if (!l) { await easymv.core.addLyrics(); l = easymv.core.state.project.elements.find((x) => x.type === 'lyrics'); } easymv.core.setLyrics(l.id, (y) => { y.lines = [{ t0: 1, text: 'one' }, { t0: 3, text: 'two' }]; }, 'test'); return l.id; });
+    await E((id) => easymv.core.captionsToScript(id), cid);
+    check('captions convert into a script layer', await E(() => easymv.core.state.project.elements.filter((x) => x.type === 'script').length >= 3));
+    await E(() => easymv.shell.showPanel('lyrics'));
+    await E((id) => easymv.core.select(id), cid);
+    await until(() => document.querySelectorAll('.panel-lyrics .lyric-row .end-input').length >= 1);
+    check('captions rows have an end time', true);
 
     // Phone layout
     await pg.setViewportSize({ width: 390, height: 800 });

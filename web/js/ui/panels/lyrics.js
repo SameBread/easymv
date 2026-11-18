@@ -1,4 +1,4 @@
-// Lyrics: paste words, tap along to the song to time them (or import LRC), then style
+// Closed captions to the song to time them (or import LRC), then style
 // and place them. Edits the selected lyrics layer (or the first one).
 
 import * as core from '../../core.js';
@@ -9,7 +9,7 @@ import { lyricsSettings, linesFromText, parseLrc, formatLrc, sortLines, tapStamp
 
 export function createLyricsPanel(shell) {
   const element = h('div.panel-lyrics');
-  let tapIdx = 0; let wordMode = false; let wordIdx = 0;
+  let tapIdx = 0; let wordMode = false; let wordIdx = 0; let holdMode = false; let holdLine = null; let holdT0 = 0;
   let lastSig = '';
 
   const target = () => {
@@ -41,7 +41,14 @@ export function createLyricsPanel(shell) {
         const next = tapStamp(l.lines, tapIdx, t);
         tapIdx = next < 0 ? l.lines.length : next;
       }
-    }, 'Tap lyric', `tap:${def.id}`);
+    }, 'Tap caption', `tap:${def.id}`);
+  }
+
+  function holdEnd() {
+    const def = target(); const k = holdLine; holdLine = null;
+    if (!def || k == null) return;
+    const t = now();
+    edit(def, (l) => { const ln = l.lines[k]; if (ln && ln.t0 != null && t > ln.t0 + 0.15) ln.t1 = t; }, 'Set caption length', `hold:${def.id}`);
   }
 
   element.addEventListener('keydown', (e) => {
@@ -52,23 +59,27 @@ export function createLyricsPanel(shell) {
   // ---------- sections ----------
 
   const section = (title, ic, ...body) => h('details.sect', { open: true }, h('summary', icon(ic), h('span', title), icon('expand_more', 'chev')), h('div.sect-body', body));
-  const set = (def, path, label) => (v) => core.setLyrics(def.id, (l) => { const ks = path.split('.'); let o = l; for (const k of ks.slice(0, -1)) o = o[k]; o[ks.at(-1)] = v; }, `Lyrics ${label}`, `lyr:${def.id}:${path}`);
+  const set = (def, path, label) => (v) => core.setLyrics(def.id, (l) => { const ks = path.split('.'); let o = l; for (const k of ks.slice(0, -1)) o = o[k]; o[ks.at(-1)] = v; }, `Captions ${label}`, `lyr:${def.id}:${path}`);
 
   function linesSection(def, lyr) {
-    const paste = h('textarea.paste', { rows: 4, placeholder: 'Paste lyrics here, one line per row…', 'aria-label': 'Lyrics text' });
+    const paste = h('textarea.paste', { rows: 4, placeholder: 'Paste captions or lyrics here, one line per row…', 'aria-label': 'Caption text' });
     const lines = lyr.lines;
     const next = lines[tapIdx];
-    const tapBtn = h('button.btn.filled.tap-btn', { type: 'button', disabled: !lines.length, onclick: tap, title: 'Tap on the beat of each line while the song plays. Shortcut: T', 'aria-keyshortcuts': 'T' },
+    const tapBtn = h('button.btn.filled.tap-btn', { type: 'button', disabled: !lines.length,
+      onclick: (e) => { if (!holdMode || e.detail === 0) tap(); },
+      onpointerdown: () => { if (holdMode) { holdLine = tapIdx; tap(); } }, onpointerup: () => { if (holdMode) holdEnd(); }, onpointercancel: () => { if (holdMode) holdEnd(); }, title: 'Tap on the beat of each line while the song plays. Shortcut: T', 'aria-keyshortcuts': 'T' },
       icon('bolt'), wordMode ? 'Tap word' : 'Tap line');
     const rows = h('div.lyric-rows', { role: 'list' });
     lines.forEach((l, i) => {
       const t = h('input.time-input', { value: l.t0 == null ? '' : fmtTimeMs(l.t0), placeholder: '--:--', 'aria-label': `Line ${i + 1} time`,
         onchange: (e) => { const v = e.target.value.trim() === '' ? null : parseTime(e.target.value); edit(def, (x) => { x.lines[i].t0 = v; if (v != null) sortLines(x.lines); }, 'Set lyric time'); } });
+      const endIn = h('input.time-input.end-input', { value: l.t1 == null ? '' : fmtTimeMs(l.t1), placeholder: 'end', title: 'When this caption disappears. Empty = when the next one starts.', 'aria-label': `Line ${i + 1} end time`,
+        onchange: (e) => { const v = e.target.value.trim() === '' ? null : parseTime(e.target.value); edit(def, (x) => { if (v == null || (x.lines[i].t0 != null && v > x.lines[i].t0)) { if (v == null) delete x.lines[i].t1; else x.lines[i].t1 = v; } }, 'Set caption end'); } });
       const txt = h('input.text-input', { value: l.text, 'aria-label': `Line ${i + 1} text`, onchange: (e) => edit(def, (x) => { x.lines[i].text = e.target.value; delete x.lines[i].words; }, 'Edit lyric', `lyr-text:${i}`) });
       rows.append(h('div.lyric-row', { role: 'listitem', class: `${i === tapIdx ? 'next' : ''} ${l.t0 != null && now() >= l.t0 ? 'past' : ''}`,
         onclick: (e) => { if (e.target.tagName !== 'INPUT') { tapIdx = i; wordIdx = 0; if (l.t0 != null) core.seek(Math.round(l.t0 * fps())); build(); } } },
-      h('span.row-n', String(i + 1)), t, txt,
-      h('button.icon-btn.sm', { type: 'button', title: 'Clear time', 'aria-label': 'Clear time', onclick: () => edit(def, (x) => { x.lines[i].t0 = null; delete x.lines[i].words; }, 'Clear lyric time') }, icon('close')),
+      h('span.row-n', String(i + 1)), t, endIn, txt,
+      h('button.icon-btn.sm', { type: 'button', title: 'Clear time', 'aria-label': 'Clear time', onclick: () => edit(def, (x) => { x.lines[i].t0 = null; delete x.lines[i].t1; delete x.lines[i].words; }, 'Clear lyric time') }, icon('close')),
       h('button.icon-btn.sm', { type: 'button', title: 'Delete line', 'aria-label': 'Delete line', onclick: () => edit(def, (x) => { x.lines.splice(i, 1); }, 'Delete lyric line') }, icon('delete'))));
     });
     const lrcIn = h('input', { type: 'file', accept: '.lrc,.txt,text/plain', hidden: true, onchange: async (e) => {
@@ -80,19 +91,21 @@ export function createLyricsPanel(shell) {
     return section('Words and timing', 'lyrics',
       h('div.row', h('button.btn.tonal', { type: 'button', onclick: () => {
         const arr = linesFromText(paste.value); if (!arr.length) return;
-        edit(def, (x) => { x.lines = [...x.lines, ...arr]; }, 'Add lyric lines'); paste.value = '';
+        edit(def, (x) => { x.lines = [...x.lines, ...arr]; }, 'Add caption lines'); paste.value = '';
       } }, icon('add'), 'Add lines'),
-      h('button.btn.text', { type: 'button', onclick: () => { edit(def, (x) => { x.lines = linesFromText(paste.value); }, 'Replace lyrics'); tapIdx = 0; } }, 'Replace all')),
+      h('button.btn.text', { type: 'button', onclick: () => { edit(def, (x) => { x.lines = linesFromText(paste.value); }, 'Replace captions'); tapIdx = 0; } }, 'Replace all')),
       paste,
       h('div.tap-bar', tapBtn,
         h('span.muted', next ? `Next: “${next.text.slice(0, 28)}${next.text.length > 28 ? '…' : ''}”` : lines.length ? 'All lines timed.' : 'Add some lines first.'),
         h('span.grow'),
         h('button.btn.text.sm', { type: 'button', onclick: () => { tapIdx = 0; wordIdx = 0; build(); } }, icon('refresh'), 'Restart'),
+        toggle({ label: 'Hold to set length', value: holdMode, title: 'Press and hold the tap button for as long as the caption should stay. Release sets its end time.', onChange: (v) => { holdMode = v; build(); } }).el,
         toggle({ label: 'Word by word', value: wordMode, title: 'For karaoke: tap each word of a line', onChange: (v) => { wordMode = v; wordIdx = 0; build(); } }).el),
       h('div.note', state.playing ? 'Playing. Tap on each line as it starts (or press T).' : 'Press play in the preview, then tap each line as it is sung (or press T). Drag the scrubber to re-time.'),
       rows, lrcIn,
       h('div.row',
         h('button.btn.text', { type: 'button', onclick: () => lrcIn.click() }, icon('file_upload'), 'Import LRC'),
+        h('button.btn.text', { type: 'button', title: 'Make a Script layer with these lines, for animated kinetic text', disabled: !lines.length, onclick: async () => { const id = await core.captionsToScript(def.id); if (id) { core.toast('Script layer created. Hide or delete the captions layer to avoid showing both.'); shell.showPanel('script'); } } }, icon('slideshow'), 'Convert to Script'),
         h('button.btn.text', { type: 'button', disabled: !lines.some((l) => l.t0 != null), onclick: () => core.download(new Blob([formatLrc(lines)], { type: 'text/plain' }), `${def.id}.lrc`) }, icon('file_download'), 'Export LRC'),
         h('button.btn.text', { type: 'button', disabled: !lines.length, onclick: () => { edit(def, (x) => { const d = state.engine ? 0 : 3; let t = now(); for (const l of x.lines) { l.t0 = t; t += 3 + d * 0; } }, 'Space lines evenly'); } }, icon('timeline'), 'Space evenly from playhead')));
   }
@@ -143,8 +156,8 @@ export function createLyricsPanel(shell) {
     clear(element); lastSig = sig();
     const def = target();
     if (!def) {
-      element.append(h('div.empty-note', icon('lyrics'), h('p', 'No lyrics layer yet.'),
-        h('button.btn.filled', { type: 'button', onclick: () => core.addLyrics() }, icon('add'), 'Add lyrics layer')));
+      element.append(h('div.empty-note', icon('lyrics'), h('p', 'No closed-captions layer yet.'),
+        h('button.btn.filled', { type: 'button', onclick: () => core.addLyrics() }, icon('add'), 'Add closed captions')));
       return;
     }
     const lyr = lyricsSettings(def);
@@ -159,5 +172,5 @@ export function createLyricsPanel(shell) {
   on('project', refresh); on('selection', refresh);
   on('transport', refresh);
   build();
-  return { element, title: 'Lyrics', tap };
+  return { element, title: 'Captions', tap };
 }

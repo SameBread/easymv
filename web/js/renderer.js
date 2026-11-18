@@ -565,17 +565,20 @@ export class Renderer {
     const f = frameAt(c, it.time, { pulse: pulse * (def.script?.pulse ?? 1) });
     for (const pass of f.passes) for (const r of pass.runs) {
       const px = Math.max(8, Math.round(r.size));
-      r.key = `scr|${r.text}|${r.font}|${r.weight}|${r.color}|${px}`;
+      const sh = r.shadow ? Math.round(r.shadow * 10) / 10 : 0;
+      r.key = `scr|${r.text}|${r.font}|${r.weight}|${r.color}|${px}|${sh}`;
       if (this.textTex.has(r.key)) { const e = this.textTex.get(r.key); this.textTex.delete(r.key); this.textTex.set(r.key, e); continue; }
       const font = migrateFont(r.font);
       const g = document.createElement('canvas').getContext('2d');
       const css = `${nearestWeight(font, r.weight)} ${px}px ${familyCss(font)}`;
       g.font = css;
-      const pad = Math.ceil(px * 0.2);
+      const pad = Math.ceil(px * (0.2 + 0.35 * sh));
       const w = Math.ceil(g.measureText(r.text).width + pad * 2); const h = Math.ceil(px * 1.3 + pad * 2);
       const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
       const k = cv.getContext('2d'); k.font = css; k.textAlign = 'center'; k.textBaseline = 'middle'; k.fillStyle = r.color;
+      if (sh > 0) { k.shadowColor = 'rgba(0,0,0,0.75)'; k.shadowBlur = px * 0.22 * sh + 1; k.shadowOffsetY = px * 0.05 * sh; }
       k.fillText(r.text, w / 2, h / 2 + px * 0.04);
+      if (sh > 0.3) k.fillText(r.text, w / 2, h / 2 + px * 0.04);
       this._uploadText(r.key, cv);
     }
     it.scr = f;

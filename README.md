@@ -97,13 +97,14 @@ Deferred per the design doc: BPM/beat tracking, threading, lyrics, `wgpu`, audio
 
 ## What is new in v0.5
 
-- **Editor:** Material 3 look, menu bar (File, Edit, View, Layer, Timeline, Audio, Window, Settings, Help), draggable and interchangeable Dockview panels, saved and named workspaces (built-ins Compose, Animate, Lyrics, Mix; your own are stored in the browser and can be exported and imported as JSON). On a phone: preview on top, bottom navigation, one panel at a time.
+- **Editor:** Material 3 look, menu bar (File, Edit, View, Layer, Timeline, Audio, Window, Settings, Help), draggable and interchangeable Dockview panels, saved and named workspaces (built-ins Compose, Animate, Captions, Present, Mix; your own are stored in the browser and can be exported and imported as JSON). On a phone: preview on top, bottom navigation, one panel at a time.
 - **Layers and Inspector:** Clip Studio style layer list with drag-to-reorder and a typed Order field. Every property row has a keyframe diamond and sound-link chips with a live meter and an editable mapping graph.
 - **Signals panel:** your sounds and their six features; drag a feature onto a property to connect it.
 - **Timeline:** per-layer visibility bars (hidden layers are not decoded, simulated or drawn), keyframes with hold/linear/smooth, sections, beat snapping. Per property the timeline can override the sound, blend with it (add or multiply) or mix.
 - **Visualizer layers:** bars, spikes, dots and waveform wrapped around a line, circle, triangle, square, pentagon, hexagon, star or heart.
 - **Effects:** snow, dust, glitter, sparks, confetti, rain, bubbles and retro pixel fire. All are GPU particles that are a pure function of time, so scrubbing and export match the preview. A lo-fi option snaps them to a pixel grid.
-- **Lyrics:** paste words, tap along to time them, LRC import and export, fonts including your own font file, animations, karaoke highlight and automatic placement that is the same on every run.
+- **Closed captions (CC)** (formerly Lyrics): paste words, tap along to time them (hold the tap button to set how long a line stays), start and end time per line, LRC import and export, fonts including your own font file, animations, karaoke highlight and automatic placement that is the same on every run.
+- **Script (kinetic text):** write an outline and get animated, automatically laid-out scenes, with no AI. Modes: *Presentation* (own animated backgrounds, Present mode) and *Lyrics over a background* (transparent, word-by-word, lower third, text shadow). Tabs: Write, Timing (tap to sync, start/end per line), Look (style, background, fonts incl. your own file, colours), Scenes (lock layout/transition per scene). Add → Script → Demo gives a Marxism explainer and a song-lyrics example. Converts to and from closed captions and LRC. Engine: `web/js/kinetic.js` (pure and deterministic), text helpers in `web/js/scripttext.js`.
 
 ## Tests
 

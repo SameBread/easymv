@@ -9,8 +9,8 @@
 // Script syntax (everything is optional; plain paragraphs work):
 //   blank line or ---     next scene          # Title      ## Subtitle
 //   - bullet              > quote             -- Attribution
-//   **word**              emphasis            [mm:ss.x] text   start time of a scene or line
-//   ::dur 4  ::bg #123456  ::style retro  ::layout stack  ::trans push  ::pal 2   scene settings
+//   **word**              emphasis            [mm:ss.x] text   start time;  [mm:ss.x-mm:ss.x] text  also sets the end
+//   ::dur 4  ::bg #123456  ::style retro  ::layout stack  ::trans push  ::pal 2  ::reveal word   scene settings
 //   @pack punchy  @energy 0.8  @seed 3  @font Anton   whole-script settings
 //
 // ctx: { W, H, measure(text, font, weight, px) -> width px, total? (seconds to fill) }
@@ -136,7 +136,9 @@ export const TRANSITION_IDS = ['cut', 'fade', 'push', 'zoom', 'wipe', 'bars', 'c
 const STOP = new Set(('a an the and or but if so of to in on at by for from with as is are was were be been being it its this that these those i you he she we they me him her us them my your his our their ' +
   'not no do does did have has had will would can could should may might must just than then there here what which who whom when where why how all any each more most other some such only own same too very s t').split(' '));
 const norm = (w) => w.toLowerCase().replace(/[^\p{L}\p{N}']/gu, '');
-const TIME_TAG = /^\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]\s*/;
+const TT = String.raw`(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?`;
+const TIME_TAG = new RegExp(String.raw`^\[${TT}(?:\s*[-\u2013>]\s*${TT})?\]\s*`);
+const tsec = (a, b, c) => Number(a) * 60 + Number(b) + (c ? Number(c) / 10 ** c.length : 0);
 
 function parseWords(text) {
   const words = []; let on = false;
@@ -152,16 +154,18 @@ function parseWords(text) {
 export function parseScript(text) {
   const options = {}; const scenes = []; let cur = null;
   const flush = () => { if (cur && (cur.lines.length || cur.dir.dur != null)) scenes.push(cur); cur = null; };
-  const open = () => { cur ??= { lines: [], dir: {}, t: null }; return cur; };
+  const open = () => { cur ??= { lines: [], dir: {}, dirIdx: {}, src: [], t: null }; return cur; };
+  let ln = -1;
   for (const rawLine of String(text).split(/\r?\n/)) {
+    ln++;
     const line = rawLine.trim();
     if (!line) { flush(); continue; }
     if (/^-{3,}$/.test(line)) { flush(); continue; }
     let m;
     if ((m = /^@(\w+)\s+(.*)$/.exec(line))) { options[m[1]] = m[2].trim(); continue; }
-    if ((m = /^::(\w+)\s*(.*)$/.exec(line))) { open().dir[m[1]] = m[2].trim(); continue; }
-    let t = null; let body = line;
-    if ((m = TIME_TAG.exec(body))) { t = Number(m[1]) * 60 + Number(m[2]) + (m[3] ? Number(m[3]) / 10 ** m[3].length : 0); body = body.slice(m[0].length); }
+    if ((m = /^::(\w+)\s*(.*)$/.exec(line))) { const o = open(); o.dir[m[1]] = m[2].trim(); o.dirIdx[m[1]] = ln; o.src.push(ln); continue; }
+    let t = null; let t1 = null; let body = line;
+    if ((m = TIME_TAG.exec(body))) { t = tsec(m[1], m[2], m[3]); if (m[4] != null) t1 = tsec(m[4], m[5], m[6]); body = body.slice(m[0].length); }
     let role = null;
     if ((m = /^(#{1,2})\s+(.*)$/.exec(body))) { if (cur?.lines.length) flush(); role = m[1].length === 1 ? 'title' : 'sub'; body = m[2]; }
     else if ((m = /^[-*•]\s+(.*)$/.exec(body))) { role = 'bullet'; body = m[1]; }
@@ -172,7 +176,8 @@ export function parseScript(text) {
     const words = parseWords(body);
     if (!words.length) continue;
     if (t != null && sc.t == null && !sc.lines.length) sc.t = t;
-    sc.lines.push({ words, role, t: t != null && sc.lines.length ? t : null });
+    sc.src.push(ln);
+    sc.lines.push({ words, role, t: t != null && sc.lines.length ? t : null, t1, idx: ln, tag: t, tag1: t1 });
   }
   flush();
   return { options, scenes };
@@ -227,6 +232,7 @@ export function readingTime(words, energy = 0.5) {
 function planTiming(script, energy, total) {
   const sc = script.scenes;
   let anyExplicit = false;
+  const exEnd = sc.map((s) => { const v = s.lines.map((l) => l.t1).filter((x) => x != null); return v.length ? Math.max(...v) : null; });
   const dur = sc.map((s) => {
     const nw = s.lines.reduce((a, l) => a + l.words.length, 0);
     if (s.dir.dur != null && Number.isFinite(Number(s.dir.dur))) return Number(s.dir.dur);
@@ -239,14 +245,18 @@ function planTiming(script, energy, total) {
     const k = total / sum;
     for (let i = 0; i < dur.length; i++) if (sc[i].dir.dur == null) dur[i] *= k;
   }
+  const endX = new Array(sc.length).fill(false);
   let t = 0;
   for (let i = 0; i < sc.length; i++) {
     if (start[i] == null) start[i] = t;
     const nextStart = i + 1 < sc.length ? sc[i + 1].t : null;
-    if (nextStart != null && sc[i].dir.dur == null) dur[i] = Math.max(0.5, nextStart - start[i]);
+    if (sc[i].dir.dur == null) {
+      if (exEnd[i] != null) { dur[i] = Math.max(0.3, exEnd[i] - start[i]); endX[i] = true; }
+      else if (nextStart != null) dur[i] = Math.max(0.5, nextStart - start[i]);
+    }
     t = start[i] + dur[i];
   }
-  return { start, dur };
+  return { start, dur, endX };
 }
 
 // ---------- layout ----------
@@ -306,7 +316,7 @@ function blockAt(cx, lines, S, maxW, align) {
 }
 
 function fitBlock(cx, lines, box, align, scale = 1) {
-  let lo = 8; let hi = box.h * 0.9; let best = null;
+  let lo = 8; let hi = Math.min(box.h * 0.9, box.cap ?? Infinity); let best = null;
   for (let it = 0; it < 16; it++) {
     const mid = (lo + hi) / 2;
     const b = blockAt(cx, lines, mid, box.w, align);
@@ -344,7 +354,7 @@ function layoutCenter(cx, sc, box, align = 'center') {
 }
 
 function layoutLeft(cx, sc, box, W, H) {
-  const bx = { x: box.x + W * 0.035, y: box.y, w: box.w * 0.78, h: box.h };
+  const bx = { x: box.x + W * 0.035, y: box.y, w: box.w * 0.78, h: box.h, cap: box.cap };
   const { b } = fitBlock(cx, sceneLines(sc), bx, 'left');
   const runs = placeBlock(cx, sceneLines(sc), b, bx, { align: 'left' });
   const top = Math.min(...runs.map((r) => r.y - r.size * 0.55)); const bot = Math.max(...runs.map((r) => r.y + r.size * 0.55));
@@ -493,11 +503,11 @@ function eligible(name, sc) {
   }
 }
 
-function chooseLayout(sc, P, energy, prev, seed, i) {
+function chooseLayout(sc, P, energy, prev, seed, i, allow) {
   if (sc.dir.layout && LAYOUTS[sc.dir.layout]) return sc.dir.layout;
   const roles = sc.lines.map((l) => l.role);
   const loud = new Set(['stack', 'bigword', 'diagonal']);
-  const entries = LAYOUT_IDS.filter((n) => eligible(n, sc)).map((n) => {
+  const entries = LAYOUT_IDS.filter((n) => eligible(n, sc) && (!allow || allow.includes(n))).map((n) => {
     let w = P.layouts[n] ?? 1;
     if (loud.has(n)) w *= 0.6 + 0.9 * energy; else if (n === 'center' || n === 'left' || n === 'quote') w *= 1.35 - 0.7 * energy;
     if (n === 'stat' && roles.includes('stat')) w *= 8;
@@ -507,20 +517,26 @@ function chooseLayout(sc, P, energy, prev, seed, i) {
     w *= 0.8 + 0.4 * rnd(seed, 'lay', i, n);
     return [n, w];
   });
+  if (!entries.length) return 'center';
   return pickWeighted(entries, rnd(seed, 'pick', i));
 }
 
 // ---------- compile ----------
 
-function planPalette(P, sc, i, seed, prevIdx) {
+function planPalette(P, sc, i, seed, prevIdx, ov = {}) {
   let idx;
   if (sc.dir.pal != null && Number.isFinite(Number(sc.dir.pal))) idx = (Number(sc.dir.pal) - 1 + P.palettes.length * 10) % P.palettes.length;
   else { idx = Math.floor(rnd(seed, 'pal', i) * P.palettes.length); if (idx === prevIdx && P.palettes.length > 1) idx = (idx + 1) % P.palettes.length; }
   const base = P.palettes[idx];
   let bg = hexToRgb(base.bg); let bg2 = hexToRgb(base.bg2);
+  if (ov.bgMode === 'solid' && ov.bgColor) { bg = hexToRgb(ov.bgColor); bg2 = mixc(bg, luminance(bg) > 0.4 ? [0, 0, 0] : [255, 255, 255], 0.12); }
   if (sc.dir.bg && /^#[0-9a-f]{3,6}$/i.test(sc.dir.bg)) { bg = hexToRgb(sc.dir.bg); bg2 = mixc(bg, luminance(bg) > 0.4 ? [0, 0, 0] : [255, 255, 255], 0.12); }
-  const fg = ensureContrast(hexToRgb(base.fg), bg, 4.5);
-  const accent = ensureContrast(hexToRgb(base.accent), bg, 3);
+  const none = ov.bgMode === 'none';
+  const ref = none ? [24, 24, 28] : bg;
+  let fg = none ? [255, 255, 255] : ensureContrast(hexToRgb(base.fg), bg, 4.5);
+  let accent = ensureContrast(hexToRgb(base.accent), ref, 3);
+  if (ov.fg && /^#[0-9a-f]{3,6}$/i.test(ov.fg)) fg = hexToRgb(ov.fg);
+  if (ov.accent && /^#[0-9a-f]{3,6}$/i.test(ov.accent)) accent = hexToRgb(ov.accent);
   return { idx, bg, bg2, fg, accent, onAccent: readable(accent) };
 }
 
@@ -540,16 +556,25 @@ export function compileScript(script, ctx) {
   const seed = Number(ctx.seed ?? opts.seed ?? 1);
   const fonts = { head: ctx.fontHead || opts.font || P.head, body: ctx.fontBody || (opts.font && !ctx.fontHead ? opts.font : P.body) };
   const cx = Ctx(ctx, packName, fonts);
-  const { start, dur } = planTiming(script, energy, ctx.total);
+  const { start, dur, endX } = planTiming(script, energy, ctx.total);
   const mx = W * 0.075; const my = H * 0.09;
-  const box = { x: mx, y: my, w: W - 2 * mx, h: H - 2 * my };
+  let box = { x: mx, y: my, w: W - 2 * mx, h: H - 2 * my };
+  const place = ctx.place ?? opts.place ?? 'full';
+  if (place === 'lower') box = { x: mx, y: H * 0.6, w: W - 2 * mx, h: H * 0.34 };
+  else if (place === 'upper') box = { x: mx, y: H * 0.06, w: W - 2 * mx, h: H * 0.34 };
+  else if (place === 'middle') box = { x: mx, y: H * 0.3, w: W - 2 * mx, h: H * 0.4 };
+  if (place !== 'full') box.cap = H * 0.14;
+  const allow = (ctx.layoutSet ?? opts.layouts) === 'calm' ? ['center', 'left', 'diagonal'] : null;
+  const bgMode = ['scenes', 'solid', 'none'].includes(ctx.bgMode) ? ctx.bgMode : 'scenes';
+  const revealDef = ['auto', 'word', 'line'].includes(ctx.reveal) ? ctx.reveal : 'auto';
+  const ov = { bgMode, bgColor: ctx.bgColor, fg: ctx.fg, accent: ctx.accent };
 
   const scenes = []; let prevLay = []; let prevPal = -1;
   script.scenes.forEach((sc, i) => {
     const styleName = sc.dir.style && PACKS[sc.dir.style] ? sc.dir.style : packName;
     const SP = PACKS[styleName];
     const scx = styleName === packName ? cx : Ctx(ctx, styleName, { head: SP.head, body: SP.body });
-    const layoutName = chooseLayout(sc, SP, energy, prevLay, seed, i);
+    const layoutName = chooseLayout(sc, SP, energy, prevLay, seed, i, allow);
     prevLay = [layoutName, prevLay[0]];
     let lay = LAYOUTS[layoutName](scx, sc, box, W, H);
     let used = layoutName;
@@ -562,17 +587,19 @@ export function compileScript(script, ctx) {
       const k = Math.min(1, box.w / Math.max(1, x1 - x0), box.h / Math.max(1, y1 - y0));
       if (k < 0.999) { const ox = (x0 + x1) / 2; const oy = (y0 + y1) / 2; for (const r of lay.runs) { r.x = ox + (r.x - ox) * k; r.y = oy + (r.y - oy) * k; r.size *= k; r.w *= k; } }
     }
-    const pal = planPalette(SP, sc, i, seed, prevPal); prevPal = pal.idx;
+    const pal = planPalette(SP, sc, i, seed, prevPal, ov); prevPal = pal.idx;
 
     // timing of lines within the scene (reveal order); explicit line times win
     const t0 = start[i]; const d = dur[i];
-    const lead = Math.min(0.2, d * 0.1); const tail = Math.min(0.6, d * 0.2);
+    const lead = sc.t != null ? 0 : Math.min(0.2, d * 0.1); const tail = endX[i] ? 0 : Math.min(0.6, d * 0.2);
     const wts = sc.lines.map((l) => Math.max(1, l.words.length));
     const wsum = wts.reduce((a, b) => a + b, 0);
     let acc = 0; const lineT = sc.lines.map((ln, li) => {
       const v = ln.t != null ? ln.t : li === 0 ? t0 + lead : t0 + lead + (d - lead - tail) * (acc / wsum);
       acc += wts[li]; return v;
     });
+    const lineEnds = sc.lines.map((ln, li) => ln.t1 ?? (li + 1 < sc.lines.length ? lineT[li + 1] : t0 + d - tail));
+    const reveal = ['auto', 'word', 'line'].includes(sc.dir.reveal) ? sc.dir.reveal : revealDef;
     // motion personality for this scene
     const mseed = rnd(seed, 'motion', i);
     const inType = IN_FOR[sc.dir.motion] ?? pick(SP.motion, mseed);
@@ -585,15 +612,18 @@ export function compileScript(script, ctx) {
       const ord = lineCount.get(li) ?? 0; lineCount.set(li, ord + 1);
       const c = r.color ?? (r.emph && emphStyle === 'color' ? 'accent' : r.role === 'whisper' || r.role === 'cite' ? 'dim' : 'fg');
       const onBar = r.emph && emphStyle === 'bar' && !r.deco;
+      let rt = lineT[li] + ord * step;
+      if (reveal === 'line') rt = lineT[li] + ord * 0.02;
+      else if (reveal === 'word') { const nW = sc.lines[li].words.length; const span = Math.max(0.2, lineEnds[li] - lineT[li]); rt = lineT[li] + ord * Math.min(0.9, (span * 0.8) / Math.max(1, nW)); }
       return { ...r, idx, font: scx.font(r.role), weight: scx.weight(r.role), color: onBar ? 'onAccent' : c,
-        t0: r.deco ? lineT[0] : lineT[li] + ord * step, anim: { type: r.deco ? 'zoom' : inType, spring },
+        t0: r.deco ? lineT[0] : rt, anim: { type: r.deco ? 'zoom' : inType, spring },
         bar: onBar, phase: rnd(seed, 'ph', i, idx) * 6.283 };
     });
     // character-level reveal for short title runs when the scene asks for it (typewriter)
     const decor = (lay.decor ?? []).map((dc) => ({ ...dc, t0: dc.li != null ? lineT[dc.li] : t0 + lead, spring }));
-    const bgKind = sc.dir.bgstyle ?? pick(SP.bgs, rnd(seed, 'bg', i));
+    const bgKind = bgMode === 'none' ? 'none' : bgMode === 'solid' ? 'solid' : (sc.dir.bgstyle ?? pick(SP.bgs, rnd(seed, 'bg', i)));
     scenes.push({ i, t0, t1: t0 + d, dur: d, layout: used, pal, bgKind, runs, decor, inType, emphStyle, spring,
-      idle: SP.idle, pulse: SP.pulse, drift: SP.drift, pack: styleName, trans: null, lineT });
+      idle: SP.idle, pulse: SP.pulse, drift: SP.drift, pack: styleName, trans: null, lineT, fadeOut: endX[i], reveal });
   });
 
   // transitions between scenes
@@ -610,7 +640,7 @@ export function compileScript(script, ctx) {
     a.trans = { type, d: type === 'cut' ? 0.02 : SP.transDur * (1.35 - 0.7 * energy), dir: dirs[Math.floor(rnd(seed, 'dir', i) * 4)] };
   }
   const total = scenes.length ? scenes.at(-1).t1 : 0;
-  return { W, H, packName, energy, seed, scenes, total, fonts };
+  return { W, H, packName, energy, seed, scenes, total, fonts, shadow: clamp(Number(ctx.shadow) || 0, 0, 1), bgMode };
 }
 
 // ---------- evaluation ----------
@@ -679,6 +709,7 @@ function background(geo, sc, t, W, H, pulse) {
     pushQuadColors(geo, 0, 0, W, H, [corner(0, 0), corner(W, 0), corner(W, H), corner(0, H)], 1);
   };
   switch (sc.bgKind) {
+    case 'none': break;
     case 'gradient': grad(0.9 + Math.sin(u * 0.35 + sc.i) * 0.35); break;
     case 'split': pushRect(geo, 0, 0, W, H, 0, bg, 1); pushRect(geo, W * 0.3, -H * 0.3, W * 0.9, H * 1.6, -0.35 + Math.sin(u * 0.4) * 0.03, bg2, 1); break;
     case 'bars': {
@@ -769,12 +800,12 @@ function sceneStack(c, t) {
   const a = S[i];
   // a transition into scene i happens in [t0 - d/2, t0 + d/2]
   const prev = i > 0 ? S[i - 1] : null;
-  if (prev?.trans) {
+  if (prev?.trans && prev.t1 >= a.t0 - prev.trans.d / 2 - 1e-6) {
     const d = prev.trans.d; const p = (t - (a.t0 - d / 2)) / d;
     if (p > 0 && p < 1) return [{ sc: prev, role: 'out', p, trans: prev.trans }, { sc: a, role: 'in', p, trans: prev.trans }];
   }
   const nxt = S[i + 1];
-  if (nxt && a.trans) {
+  if (nxt && a.trans && a.t1 >= nxt.t0 - a.trans.d / 2 - 1e-6) {
     const d = a.trans.d; const p = (t - (nxt.t0 - d / 2)) / d;
     if (p > 0 && p < 1) return [{ sc: a, role: 'out', p, trans: a.trans }, { sc: nxt, role: 'in', p, trans: a.trans }];
   }
@@ -822,7 +853,9 @@ export function frameAt(c, t, { pulse = 0 } = {}) {
   const passes = [];
   for (const entry of sceneStack(c, t)) {
     const tf = transformsFor(entry, c.W, c.H);
+    if (entry.sc.fadeOut) { const k = clamp((entry.sc.t1 - t) / 0.3, 0, 1); if (k < 1) tf.alpha = (tf.alpha ?? 1) * k; }
     const d = drawScene(entry.sc, t, c.W, c.H, pulse, tf);
+    if (c.shadow) for (const r of d.runs) r.shadow = c.shadow;
     passes.push(d);
   }
   // a transition edge line for wipes
@@ -831,5 +864,5 @@ export function frameAt(c, t, { pulse = 0 } = {}) {
 
 /** Compact summary used by the UI and tests. */
 export function summarize(c) {
-  return c.scenes.map((s) => ({ i: s.i, t0: +s.t0.toFixed(2), t1: +s.t1.toFixed(2), layout: s.layout, motion: s.inType, bg: s.bgKind, trans: s.trans?.type ?? null, words: s.runs.length }));
+  return c.scenes.map((s) => ({ i: s.i, t0: +s.t0.toFixed(2), t1: +s.t1.toFixed(2), layout: s.layout, reveal: s.reveal, motion: s.inType, bg: s.bgKind, trans: s.trans?.type ?? null, words: s.runs.length }));
 }

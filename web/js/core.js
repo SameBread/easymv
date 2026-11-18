@@ -15,7 +15,8 @@ import { packBundle, unpackBundle } from './bundle.js';
 import { VIS_DEFAULTS, VIS_PRESETS } from './visualizer.js';
 import { FX_KINDS, FX_COMMON } from './effects.js';
 import { LYRIC_DEFAULTS, lyricsSettings } from './lyrics.js';
-import { SCRIPT_DEFAULTS, scriptSettings } from './script.js';
+import { SCRIPT_DEFAULTS, scriptSettings, applyMode, DEMO_PRESENTATION, DEMO_LYRICS } from './script.js';
+import { linesToScript, scriptToLines, scriptToLrc } from './scripttext.js';
 import { registerFont } from './textcanvas.js';
 import * as TL from './timeline.js';
 import { PROP_BY_NAME } from './props.js';
@@ -106,8 +107,8 @@ export const LAYER_TYPE_INFO = {
   frameSequence: { label: 'Frame sequence', icon: 'photo_library' },
   visualizer: { label: 'Visualizer', icon: 'graphic_eq' },
   effect: { label: 'Effect', icon: 'auto_awesome' },
-  lyrics: { label: 'Lyrics', icon: 'lyrics' },
-  script: { label: 'Script', icon: 'lyrics' },
+  lyrics: { label: 'Closed captions', icon: 'closed_caption' },
+  script: { label: 'Script', icon: 'slideshow' },
 };
 
 // ---------- project model ----------
@@ -357,6 +358,13 @@ export async function syncAssets() {
       try { await registerFont(s.font, state.files.get(s.fontFile)); fontNames.add(s.font); } catch (e) { def._error = `font: ${e.message ?? e}`; }
     }
   }
+  for (const def of els) {
+    for (const [name, path] of Object.entries(def.script?.fontFiles ?? {})) {
+      if (!fontNames.has(name) && state.files.has(path)) {
+        try { await registerFont(name, state.files.get(path)); fontNames.add(name); } catch (e) { def._error = `font: ${e.message ?? e}`; }
+      }
+    }
+  }
   const live = new Set(els.map((e) => e.id));
   const stale = [...assetCache.keys()].filter((k) => !live.has(k));
   for (const k of stale.slice(0, Math.max(0, stale.length - 12))) {
@@ -433,16 +441,57 @@ export async function addEffect(kind) {
 }
 
 export async function addLyrics() {
-  const id = uniqueId('lyrics', takenIds());
-  const def = { id, name: 'Lyrics', type: 'lyrics', lyrics: structuredClone(LYRIC_DEFAULTS) };
-  await pushLayers([def], 'Add lyrics');
+  const id = uniqueId('captions', takenIds());
+  const def = { id, name: 'Captions', type: 'lyrics', lyrics: structuredClone(LYRIC_DEFAULTS) };
+  await pushLayers([def], 'Add closed captions');
 }
 
-export async function addScript(text) {
+/** Add a script layer. `mode` is 'presentation' or 'lyrics' (lyrics = transparent, word-by-word, lower third). */
+export async function addScript(text, mode = 'presentation', name = 'Script') {
   const id = uniqueId('script', takenIds());
-  const def = { id, name: 'Script', type: 'script', script: { ...structuredClone(SCRIPT_DEFAULTS), ...(text ? { text } : {}) } };
-  await pushLayers([def], 'Add script');
+  const script = { ...structuredClone(SCRIPT_DEFAULTS) };
+  applyMode(script, mode);
+  if (text) script.text = text;
+  const def = { id, name, type: 'script', script };
+  await pushLayers([def], `Add ${name.toLowerCase()}`);
   return id;
+}
+
+/** Ready-made examples, like the image demo: 'presentation' (explainer) or 'lyrics' (song over a rain effect). */
+export async function addScriptDemo(kind) {
+  if (kind === 'lyrics') {
+    const fxId = uniqueId('rain', takenIds());
+    const info = FX_KINDS.rain; const { area, blend, y, ...rest } = info.defaults;
+    const bg = { id: fxId, name: 'Demo rain', type: 'effect', fx: { ...FX_COMMON, kind: 'rain', ...rest, area }, visualBlend: blend, base: {} };
+    state.project.elements.push(bg);
+    const id = await addScript(DEMO_LYRICS, 'lyrics', 'Demo lyrics');
+    const def = layerById(id); def.script.pack = 'smooth'; def.script.seed = 3;
+    structural(); commit('Add lyrics demo');
+    toast('Lyrics demo added. Load a song and these lines follow it.');
+    return id;
+  }
+  const id = await addScript(DEMO_PRESENTATION, 'presentation', 'Demo presentation');
+  const def = layerById(id); def.script.seed = 7; def.script.energy = 0.75;
+  structural(); commit('Add presentation demo');
+  return id;
+}
+
+/** Turn a closed-captions layer into a script layer with the same lines and times. */
+export async function captionsToScript(id) {
+  const def = layerById(id); if (!def) return;
+  const lyr = lyricsSettings(def);
+  const text = linesToScript(lyr.lines.map((l) => ({ t0: l.t0, t1: l.t1 ?? null, text: l.text })));
+  return addScript(text || undefined, 'lyrics', `${def.name ?? 'Captions'} (script)`);
+}
+
+/** Turn a script layer into a closed-captions layer (one caption per timed line). */
+export async function scriptToCaptions(id) {
+  const def = layerById(id); if (!def) return;
+  const lines = scriptToLines(scriptSettings(def).text).map((l) => ({ t0: l.t0, ...(l.t1 != null ? { t1: l.t1 } : {}), text: l.text }));
+  const nid = uniqueId('captions', takenIds());
+  const nd = { id: nid, name: `${def.name ?? 'Script'} (captions)`, type: 'lyrics', lyrics: { ...structuredClone(LYRIC_DEFAULTS), lines } };
+  await pushLayers([nd], 'Convert script to captions');
+  return nid;
 }
 
 export function setScript(id, mutate, label = 'Edit script', key = null) {
