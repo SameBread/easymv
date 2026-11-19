@@ -119,3 +119,5 @@ Deferred per the design doc: BPM/beat tracking, threading, lyrics, `wgpu`, audio
 - Script placement: `::at B2`, `::at left`, `::align`, line `{at=C3}`, word `[text]{size=1.6 color=accent at=A1 delay=.4 motion=pop}`.
 - Engine never receives render-only data: `strip()` hides `visualBlend` and sends script layers as `lyrics`; Rust also knows `Script` and `Screen` now (rebuild WASM to pick it up).
 - Syllables: `col|laps~.6|ing` reveals one by one; `~n` = seconds before the next, `{step=.4}` sets the default.
+- v0.8: preview tool bar (select/move/rotate/scale, editing on/off — Q), rebindable keyboard shortcuts (Preferences → Keyboard shortcuts), `::emph color|bar|none`, both demos rewritten with the full script syntax, new transport icons, play button no longer loses mouse clicks during playback.
+- PowerPoint import (Add → PowerPoint slides…): slides become timed script scenes; backgrounds and pictures kept, mixed with EasyMV effects, or replaced by EasyMV visuals. Parser: web/js/pptx.js (.pptx only, not .ppt).

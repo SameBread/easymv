@@ -273,7 +273,7 @@ export function annotate(script) {
         else ln.role = 'body';
       }
       ln.explicit = ln.words.some((w) => w.emph);
-      if (!ln.explicit && ln.role !== 'cite' && ln.role !== 'whisper') {
+      if (!ln.explicit && ln.role !== 'cite' && ln.role !== 'whisper' && sc.dir.emph !== 'none') {
         let best = -1; let bs = 0;
         ln.words.forEach((w, k) => {
           const x = norm(w.t); if (!x || STOP.has(x)) return;
@@ -715,7 +715,7 @@ export function compileScript(script, ctx) {
     // motion personality for this scene
     const mseed = rnd(seed, 'motion', i);
     const inType = IN_FOR[sc.dir.motion] ?? pick(SP.motion, mseed);
-    const emphStyle = SP.emph === 'mix' ? (rnd(seed, 'emph', i) < 0.5 ? 'bar' : 'color') : SP.emph;
+    const emphStyle = ['bar', 'color', 'none'].includes(sc.dir.emph) ? sc.dir.emph : SP.emph === 'mix' ? (rnd(seed, 'emph', i) < 0.5 ? 'bar' : 'color') : SP.emph;
     const spring = { k: SP.spring.k * (0.7 + 0.6 * energy), z: SP.spring.z };
     const step = SP.step * (1.35 - 0.7 * energy);
     const lineCount = new Map();

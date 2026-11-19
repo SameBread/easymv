@@ -11,7 +11,7 @@ const srv = http.createServer((q, s) => { const f = path.join(root, decodeURICom
   const { DEMO_LYRICS } = await pg.evaluate(async () => (await import('../js/script.js')));
   const m = await pg.evaluate(async () => { const s = await import('../js/script.js'); return { text: s.DEMO_LYRICS, mode: s.MODES.lyrics }; });
   await pg.evaluate(async ([text, mode]) => { await window.setup({ text, ...mode, seed: 3 }, 24, 96); window.__r.duration = 60; }, [m.text, m.mode]);
-  for (const t of [3.2, 19.5, 22.3, 29, 38.4, 45.5, 51.8, 56]) {
+  for (const t of (process.argv[3] || "3.2,19.5").split(",").map(Number)) {
     const b64 = await pg.evaluate((f) => window.render(f), Math.round(t * 24));
     fs.writeFileSync(`${out}/lf-${t}.png`, Buffer.from(b64, 'base64'));
   }

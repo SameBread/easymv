@@ -1,9 +1,10 @@
 // Shell: menu bar, command registry and shortcuts, Dockview workspaces, phone layout,
 // dialogs. Panels are DOM components created once and moved between hosts.
 
+import { ACTION_BY_ID, ACTIONS, buildMap, eventCombo, comboOf, conflictFor, normalizeCombo, prettyCombo } from '../keymap.js';
 import * as core from '../core.js';
 import { state, on, sources } from '../core.js';
-import { h, icon, iconBtn, clear, showMenu, closeMenus, dialog, numField, selectField, toggle, colorField, rafThrottle } from './dom.js';
+import { h, icon, iconBtn, btn, clear, showMenu, closeMenus, dialog, numField, selectField, toggle, colorField, rafThrottle } from './dom.js';
 import { createPreviewPanel } from './panels/preview.js';
 import { createLayersPanel } from './panels/layers.js';
 import { createInspectorPanel } from './panels/inspector.js';
@@ -88,6 +89,10 @@ export function createShell(root, dv) {
   };
   shell.pickAudio = () => filePicker('audio/*,.flac', false, ([f]) => { if (f) { core.setMaster(f); core.toast(`Loaded ${f.name}. Analyzing…`); analyzeWithProgress(); } });
   shell.pickStems = () => filePicker('audio/*,.flac', true, (fs) => core.addStems(fs));
+  shell.pickPptx = () => filePicker('.pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation', false, async ([f]) => {
+    if (!f) return;
+    try { pptxDialog(f, await core.inspectPptx(f)); } catch (e) { core.toast(e.message || 'Could not read that PowerPoint file.', 5000); }
+  });
   shell.pickImages = () => filePicker('image/*,.gif,.zip', true, (fs) => core.addFiles(fs));
   shell.openProject = () => filePicker('.json,.zip,.easymv', false, ([f]) => f && core.openFile(f));
 
@@ -123,6 +128,7 @@ export function createShell(root, dv) {
         { label: 'Demo: presentation (Marxism)', icon: 'auto_fix_high', run: async () => { await core.addScriptDemo('presentation'); shell.showPanel('script'); } },
         { label: 'Demo: lyrics (song + rain)', icon: 'auto_fix_high', run: async () => { await core.addScriptDemo('lyrics'); shell.showPanel('script'); } },
       ] },
+      { label: 'PowerPoint slides (.pptx)…', icon: 'slideshow', run: () => shell.pickPptx() },
     ];
   }
   const sel = () => state.selected && core.layerById(state.selected);
@@ -184,29 +190,38 @@ export function createShell(root, dv) {
     ['Ctrl+wheel', 'Zoom the timeline'], ['Shift+drag (timeline)', 'Box-select keyframes'], ['Alt+drag a section', 'Move only the band, not its keyframes'], ['Right-click / long-press', 'Context menus'],
   ];
 
+  // ---------- keyboard: every shortcut is an action in keymap.js, rebindable in Preferences ----------
+  const runners = {
+    play: () => commands.play.run(), prev: () => core.seek(state.frame - 1), next: () => core.seek(state.frame + 1),
+    prev10: () => core.seek(state.frame - 10), next10: () => core.seek(state.frame + 10),
+    start: () => { core.stop(); core.seek(0); }, end: () => { core.stop(); core.seek(core.totalFrames() - 1); },
+    back10: () => core.skip(-10), fwd10: () => core.skip(10), loop: () => core.setLoop(!core.transport.loop),
+    tap: () => commands.tap.run(),
+    toolSelect: () => core.setPreviewTool('select'), toolMove: () => core.setPreviewTool('move'),
+    toolRotate: () => core.setPreviewTool('rotate'), toolScale: () => core.setPreviewTool('scale'),
+    toggleEdit: () => core.setPreviewEdit(!state.prefs.previewEdit),
+    resetXform: () => sel() && core.resetTransform(state.selected),
+    undo: () => commands.undo.run(), redo: () => commands.redo.run(), redo2: () => commands.redo.run(),
+    save: () => commands.saveJson.run(), open: () => commands.open.run(), export: () => commands.export.run(),
+    dup: () => commands.dup.run(), del: () => commands.del.run(),
+  };
+  shell.runAction = (id) => runners[id]?.();
   document.addEventListener('keydown', (e) => {
-    if (document.querySelector('dialog[open]')) return;
+    if (document.querySelector('dialog[open]') || e.defaultPrevented) return;
     const tag = e.target.tagName;
     const typing = /INPUT|TEXTAREA|SELECT/.test(tag) && !(tag === 'INPUT' && ['range', 'checkbox'].includes(e.target.type));
-    const mod = e.ctrlKey || e.metaKey;
-    if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); (e.shiftKey ? commands.redo : commands.undo).run(); return; }
-    if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); commands.redo.run(); return; }
-    if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); commands.saveJson.run(); return; }
-    if (mod && e.key.toLowerCase() === 'o') { e.preventDefault(); commands.open.run(); return; }
-    if (mod && e.key.toLowerCase() === 'e') { e.preventDefault(); commands.export.run(); return; }
-    if (typing || mod) return;
-    if (e.code === 'Space' && !/BUTTON|SUMMARY/.test(tag)) { e.preventDefault(); commands.play.run(); }
-    else if (e.key === 'ArrowLeft' && !e.target.closest('.tl-scroll')) { e.preventDefault(); core.seek(state.frame - (e.shiftKey ? 10 : 1)); }
-    else if (e.key === 'ArrowRight' && !e.target.closest('.tl-scroll')) { e.preventDefault(); core.seek(state.frame + (e.shiftKey ? 10 : 1)); }
-    else if (e.key === 'Home') { core.seek(0); }
-    else if (e.key === 'End') { core.seek(core.totalFrames() - 1); }
-    else if (e.key.toLowerCase() === 'j') { core.skip(-10); }
-    else if (e.key.toLowerCase() === 'l') { core.skip(10); }
-    else if (e.key.toLowerCase() === 't' && !/BUTTON/.test(tag)) { commands.tap.run(); }
-    else if (e.key === 'Delete' && !e.target.closest('.tl-scroll') && sel()) { commands.del.run(); }
+    if (tag === 'SUMMARY') return;
+    const combo = eventCombo(e); if (!combo) return;
+    const id = buildMap(state.prefs.keys).get(combo); if (!id) return;
+    const act = ACTION_BY_ID[id];
+    if (typing && !(combo.startsWith('Ctrl+') && !/^(undo|redo|redo2)$/.test(id))) return;   // text fields keep their own keys, undo included
+    if (act.skipIn && e.target.closest(act.skipIn)) return;
+    e.preventDefault();
+    runners[id]?.();
   });
 
-  const menuItem = (c, extra = {}) => ({ label: c.label, icon: c.icon, shortcut: c.shortcut, run: c.run, ...extra });
+  const CMD_ACTION = { saveJson: 'save' };
+  const menuItem = (c, extra = {}) => { const aid = CMD_ACTION[c.id] ?? c.id; return { label: c.label, icon: c.icon, shortcut: ACTION_BY_ID[aid] ? prettyCombo(comboOf(aid, state.prefs.keys)) : c.shortcut, run: c.run, ...extra }; };
 
   // ---------- menu bar ----------
   const menus = {
@@ -427,8 +442,29 @@ export function createShell(root, dv) {
         numField({ label: 'GPU budget', value: state.prefs.budgetMB, min: 64, max: 4096, step: 64, suffix: 'MB', onChange: (v, f) => f && core.setPref('budgetMB', v) }).el,
         numField({ label: 'Audio offset', value: state.prefs.audioOffsetMs, min: -500, max: 500, step: 5, suffix: 'ms', title: 'Shifts the soundtrack against the picture in the export', onChange: (v, f) => f && core.setPref('audioOffsetMs', v) }).el),
       h('div.fld-label', 'Accent color'), sw,
+      h('div.row', btn('Keyboard shortcuts…', () => setTimeout(shortcutsDialog, 0), { variant: 'tonal', icon: 'keyboard' })),
       h('div.row', toggle({ label: 'Snap to beats', value: state.prefs.snap, onChange: (v) => core.setPref('snap', v) }).el, toggle({ label: 'Auto-key', value: state.prefs.autoKey, title: 'Editing an animated property writes a keyframe at the playhead', onChange: (v) => core.setPref('autoKey', v) }).el)],
     actions: [{ label: 'Done', variant: 'filled' }] });
+  }
+
+  shell.pptxDialog = (f, p) => pptxDialog(f, p);
+  function pptxDialog(file, parsed) {
+    const opt = { backgrounds: 'keep', timing: 'auto', secs: 5 };
+    const pics = parsed.slides.filter((s) => s.images.length).length; const bgs = parsed.slides.filter((s) => s.bg).length;
+    const hasSong = !!state.bridge;
+    const timingOpts = [['auto', 'Automatic (reading time per slide)'], ['fixed', 'Same seconds for every slide']];
+    if (hasSong) timingOpts.push(['fit', 'Stretch to the song length']);
+    const secs = numField({ label: 'Seconds per slide', value: 5, min: 1, max: 60, step: 0.5, suffix: 's', onChange: (v, f) => { if (f) opt.secs = v; } });
+    secs.el.hidden = true;
+    dialog({ title: 'Import PowerPoint', wide: true, body: [
+      h('p', `${file.name}: ${parsed.slides.length} slide${parsed.slides.length === 1 ? '' : 's'}, ${bgs} with a background, ${pics} with pictures.`),
+      h('div.fgrid',
+        selectField({ label: 'Backgrounds', value: 'keep', options: [['keep', 'Keep the PowerPoint backgrounds and pictures'], ['mix', 'Keep them and mix in EasyMV effects'], ['auto', 'EasyMV visuals only (text from the slides)']], onChange: (v) => { opt.backgrounds = v; } }).el,
+        selectField({ label: 'Timing', value: 'auto', options: timingOpts, onChange: (v) => { opt.timing = v; secs.el.hidden = v !== 'fixed'; } }).el, secs.el),
+      h('p.muted', 'Titles, subtitles, bullets and bold words become animated text; you can edit the result in the Script panel. Slides are timed from 0:00, so move the script layer on the timeline if the music starts later.')],
+    actions: [{ label: 'Cancel' }, { label: 'Import', variant: 'filled', run: async () => {
+      try { await core.importPptx(parsed, { name: file.name.replace(/\.pptx$/i, ''), backgrounds: opt.backgrounds, perSlide: opt.timing === 'fixed' ? opt.secs : 0, fitToSong: opt.timing === 'fit' }); shell.showPanel('script'); }
+      catch (e) { core.toast(e.message || 'Import failed.', 5000); return false; } } }] });
   }
 
   const helpDialog = () => dialog({ title: 'Quick start', wide: true, body: [
@@ -441,7 +477,37 @@ export function createShell(root, dv) {
       h('li', 'Script: write an outline and get animated, automatically laid-out scenes. Use it for presentations, or switch to "Lyrics over a background" for song text with word-by-word reveal. Try Add → Script → Demo.'),
       h('li', 'Window → Workspaces switches layouts. Drag panel tabs to rearrange, then Save workspace as…')),
     h('p.muted', 'Tip: Quick start adds a demo layer and automatic sound links so you can see something moving right away.')], actions: [{ label: 'Close', variant: 'filled' }] });
-  const shortcutsDialog = () => dialog({ title: 'Keyboard shortcuts', body: [h('dl.keys', shortcuts.flatMap(([k, d]) => [h('dt', h('kbd', k)), h('dd', d)]))], actions: [{ label: 'Close', variant: 'filled' }] });
+  const shortcutsDialog = () => {
+    const keys = () => state.prefs.keys ?? {};
+    const body = h('div.keymap');
+    let rec = null;   // action id being recorded
+    const note = h('p.muted', 'Click a key to change it, then press the new combination. Esc cancels, Backspace clears it.');
+    const draw = () => {
+      clear(body);
+      let group = '';
+      for (const a of ACTIONS) {
+        if (a.group !== group) { group = a.group; body.append(h('h4', group)); }
+        const combo = comboOf(a.id, keys());
+        const b = h('button.key-btn', { type: 'button', class: rec === a.id ? 'rec' : (Object.hasOwn(keys(), a.id) ? 'custom' : ''),
+          onclick: () => { rec = rec === a.id ? null : a.id; draw(); } }, rec === a.id ? 'Press keys…' : prettyCombo(combo));
+        body.append(h('div.key-row', h('span', a.label), b));
+      }
+    };
+    const onKey = (e) => {
+      if (!rec) return;
+      e.preventDefault(); e.stopPropagation();
+      if (e.key === 'Escape') { rec = null; draw(); return; }
+      const combo = e.key === 'Backspace' ? '' : eventCombo(e); if (e.key !== 'Backspace' && !combo) return;
+      const clash = conflictFor(rec, combo, keys());
+      if (clash) { core.toast(`${prettyCombo(combo)} is already used by “${clash.label}”.`, 3500); return; }
+      core.setPref('keys', { ...keys(), [rec]: combo }); rec = null; draw();
+    };
+    document.addEventListener('keydown', onKey, true);
+    draw();
+    dialog({ title: 'Keyboard shortcuts', wide: true, body: [note, body],
+      actions: [{ label: 'Reset all', run: () => { core.setPref('keys', {}); draw(); return false; } }, { label: 'Done', variant: 'filled' }],
+      onClose: () => document.removeEventListener('keydown', onKey, true) });
+  };
   const aboutDialog = () => dialog({ title: 'About EasyMV', body: [h('p', 'EasyMV v0.5. A music-video maker that runs entirely in your browser: Rust and WebAssembly for the sound analysis, WebGL2 for the picture, WebCodecs for the export.'),
     h('p.muted', 'Panels by Dockview (MIT). Icons from Material Symbols (Apache-2.0).')], actions: [{ label: 'Close', variant: 'filled' }] });
 

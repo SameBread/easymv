@@ -305,6 +305,70 @@ const srv = http.createServer((q, s) => {
     if (scr) { await E((id) => easymv.core.select(id), scr); await pg.waitForTimeout(300);
       check('selected layer shows resize + rotate handles', (await pg.locator('.sel-overlay .handle').count()) >= 5); }
 
+    // v0.8: mouse can start and stop playback (even mid-playback), editing toggle, tools, shortcuts
+    await E(() => { easymv.core.stop(); easymv.core.seek(0); });
+    const playBtn = pg.locator('.transport button[aria-label^="Play / pause"]');
+    await playBtn.click(); await pg.waitForTimeout(400);
+    check('mouse click starts playback', await E(() => easymv.core.state.playing));
+    for (let i = 0; i < 4; i++) { await playBtn.click(); await pg.waitForTimeout(250 + i * 37); const want = i % 2 === 0 ? false : true;
+      check(`mouse click toggles playback again (${i})`, (await E(() => easymv.core.state.playing)) === want); }
+    await E(() => easymv.core.stop());
+    check('start and end icons differ from frame-step icons', await E(() => { const q = (l) => document.querySelector(`.transport [aria-label^="${l}"]`).innerHTML; return new Set([q('Go to start'), q('Go to end'), q('Previous frame'), q('Next frame')]).size === 4; }));
+    await E((id) => easymv.core.select(id), await E(() => easymv.core.state.project.elements[0].id)); await pg.waitForTimeout(250);
+    check('outline drawn while editing', (await pg.locator('.sel-overlay polygon').count()) === 1);
+    await pg.click('.pv-tools .edit-toggle'); await pg.waitForTimeout(200);
+    check('editing off hides the outline', (await pg.locator('.sel-overlay polygon').count()) === 0);
+    const before8 = await E(() => JSON.stringify(easymv.core.state.project.elements.map((e) => e.base)));
+    const bb = await pg.locator('.stage canvas').boundingBox();
+    await pg.mouse.move(bb.x + bb.width / 2, bb.y + bb.height / 2); await pg.mouse.down(); await pg.mouse.move(bb.x + bb.width / 2 + 60, bb.y + bb.height / 2 + 30, { steps: 4 }); await pg.mouse.up();
+    check('editing off: dragging changes nothing', before8 === (await E(() => JSON.stringify(easymv.core.state.project.elements.map((e) => e.base)))));
+    await pg.keyboard.press('q'); await pg.waitForTimeout(150);
+    check('Q turns editing back on', await E(() => easymv.core.state.prefs.previewEdit === true));
+    await pg.keyboard.press('r'); check('R picks the scale tool', await E(() => easymv.core.state.prefs.previewTool === 'scale'));
+    await pg.keyboard.press('v'); check('V picks the select tool', await E(() => easymv.core.state.prefs.previewTool === 'select'));
+    await E(() => easymv.core.setPref('keys', { toolRotate: 'G' })); await pg.keyboard.press('g');
+    check('rebound shortcut works', await E(() => easymv.core.state.prefs.previewTool === 'rotate'));
+    await E(() => { easymv.core.setPref('keys', {}); easymv.core.setPreviewTool('select'); });
+
+    // PowerPoint import
+    const pp = await E(async () => {
+      const { zipSync, strToU8 } = await import('/vendor/fflate.js');
+      const c = document.createElement('canvas'); c.width = 40; c.height = 20; const g = c.getContext('2d'); g.fillStyle = '#e33'; g.fillRect(0, 0, 40, 20);
+      const png = new Uint8Array(await (await new Promise((r) => c.toBlob(r, 'image/png'))).arrayBuffer());
+      const NS = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"';
+      const para = (t, b) => `<a:p><a:r><a:rPr${b ? ' b="1"' : ''}/><a:t>${t}</a:t></a:r></a:p>`;
+      const sp = (type, body) => `<p:sp><p:nvSpPr><p:cNvPr id="2" name="x"/><p:cNvSpPr/><p:nvPr><p:ph type="${type}"/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody>${body}</p:txBody></p:sp>`;
+      const rels = (items) => `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${items.map(([id, tg]) => `<Relationship Id="${id}" Type="x" Target="${tg}"/>`).join('')}</Relationships>`;
+      const slide1 = `<?xml version="1.0"?><p:sld ${NS}><p:cSld><p:bg><p:bgPr><a:solidFill><a:srgbClr val="112233"/></a:solidFill></p:bgPr></p:bg><p:spTree>${sp('ctrTitle', para('Big Title'))}${sp('subTitle', para('A subtitle'))}</p:spTree></p:cSld></p:sld>`;
+      const slide2 = `<?xml version="1.0"?><p:sld ${NS}><p:cSld><p:spTree>${sp('title', para('Second slide'))}${sp('body', para('first point') + para('a ', false).replace('</a:r></a:p>', '</a:r><a:r><a:rPr b="1"/><a:t>bold</a:t></a:r></a:p>'))}<p:pic><p:nvPicPr><p:cNvPr id="5" name="p"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId2"/></p:blipFill><p:spPr><a:xfrm><a:off x="6096000" y="3429000"/><a:ext cx="3048000" cy="1524000"/></a:xfrm></p:spPr></p:pic></p:spTree></p:cSld></p:sld>`;
+      const files = {
+        'ppt/presentation.xml': strToU8(`<?xml version="1.0"?><p:presentation ${NS}><p:sldIdLst><p:sldId id="256" r:id="rId1"/><p:sldId id="257" r:id="rId2"/></p:sldIdLst><p:sldSz cx="12192000" cy="6858000"/></p:presentation>`),
+        'ppt/_rels/presentation.xml.rels': strToU8(rels([['rId1', 'slides/slide1.xml'], ['rId2', 'slides/slide2.xml']])),
+        'ppt/slides/slide1.xml': strToU8(slide1), 'ppt/slides/slide2.xml': strToU8(slide2),
+        'ppt/slides/_rels/slide2.xml.rels': strToU8(rels([['rId2', '../media/image1.png']])),
+        'ppt/media/image1.png': png,
+      };
+      const file = new File([zipSync(files)], 'deck.pptx');
+      const parsed = await easymv.core.inspectPptx(file);
+      const before = easymv.core.state.project.elements.length;
+      const id = await easymv.core.importPptx(parsed, { name: 'deck', backgrounds: 'keep', perSlide: 4 });
+      const st = easymv.core.state.project;
+      return { n: parsed.slides.length, t1: parsed.slides[0].title, sub: parsed.slides[0].subtitle, bg: parsed.slides[0].bg, b2: parsed.slides[1].bullets.map((b) => b.text), pic: parsed.slides[1].images.length,
+        script: st.elements.find((e) => e.id === id).script.text, added: st.elements.length - before, bgMode: st.elements.find((e) => e.id === id).script.bgMode,
+        vis: st.tracks.filter((x) => x.property === 'visible').length, types: st.elements.map((e) => e.type).join(',') };
+    });
+    check('pptx: slides, title, subtitle, background colour read', pp.n === 2 && pp.t1 === 'Big Title' && pp.sub === 'A subtitle' && pp.bg?.color === '#112233', JSON.stringify(pp));
+    check('pptx: bullets with bold and the picture read', pp.b2.length === 2 && pp.b2[1].includes('**bold**') && pp.pic === 1, JSON.stringify(pp.b2));
+    check('pptx: script text has timed scenes', /\[0:00\.00-0:03\.95\] # Big Title/.test(pp.script) && /\[0:04\.00-0:07\.95\] # Second slide/.test(pp.script), pp.script);
+    check('pptx: background colour + picture became layers shown only on their slides', pp.added === 3 && pp.vis >= 2 && pp.bgMode === 'none', JSON.stringify(pp));
+    check('pptx: script stays on top of imported images', pp.types.lastIndexOf('static') < pp.types.indexOf('script'), pp.types);
+    await E(() => easymv.shell.pptxDialog({ name: 'deck.pptx' }, { slides: [{ images: [], bg: null, bullets: [], texts: [] }], size: { w: 1, h: 1 }, media: new Map() }));
+    await pg.waitForTimeout(200);
+    check('pptx dialog opens with background and timing choices', (await pg.locator('dialog[open] select').count()) === 2 && /1 slide/.test(await pg.locator('dialog[open]').innerText()));
+    await pg.keyboard.press('Escape'); await pg.waitForTimeout(150);
+    const bad = await E(async () => { try { await easymv.core.inspectPptx(new File([new Uint8Array([1, 2, 3])], 'x.pptx')); return 'no error'; } catch (e) { return e.message; } });
+    check('pptx: a broken file gives a readable error', /not a valid/.test(bad), bad);
+
     // Export dialog opens and mentions size
     await E(async () => { if (!easymv.core.state.bridge) { easymv.core.setMaster(new File([new Uint8Array(64)], 's.wav', { type: 'audio/wav' })); await easymv.core.analyze(); } });
     await until(() => easymv.core.state.bridge);

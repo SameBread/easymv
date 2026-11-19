@@ -74,87 +74,145 @@ export function scriptFonts(def) {
 
 // ---------- demos ----------
 
-export const DEMO_PRESENTATION = `# Marxism in 30 seconds
-A way to read history
+// Both demos show the whole syntax: scene directives (::at ::style ::trans ::reveal ::dur ::layout), line {at=..},
+// word [..]{size color at delay motion}, syllables a|b~secs|c^size, and explicit end times for instrumental gaps.
+export const DEMO_PRESENTATION = `@pack punchy
+
+# Marxism in 30 seconds
+A way to read history {size=.8 at=B3}
 
 ---
-
+::style editorial
+::trans push
+::at left
 Every society
-runs on **WORK**
+runs on **WORK**{size=1.7 color=accent}
 
 ---
-
-Some people own the factories
-Others sell their **labour**
+::style punchy
+::trans wipe
+::layout center
+::reveal line
+Some people own the **fac|to|ries**{color=accent step=.3}
+Others sell their [labour]{size=1.5 color=#ffd166 delay=.5}
 
 ---
-
+::layout quote
+::trans fade
 > The history of all hitherto existing society is the history of class struggle.
 -- Marx and Engels, 1848
 
 ---
-
-Owners keep the **PROFIT**
-Workers keep the wage
+::trans bars
+::at top
+Owners keep the **PROFIT**{motion=zoom}
+Workers keep the wage {at=C3 color=dim}
 
 ---
-
+::style retro
+::emph color
+::dur 3.5
 2 classes
-(bourgeoisie and proletariat)
+(bourgeoisie and proletariat) {at=C3 size=.7}
 
 ---
-
-- Capital builds **power**
+::style smooth
+::trans fade
+::layout list
+- Capital builds **power**{color=accent}
 - Power shapes laws and ideas
-- Crises force **change**
+- Crises force **change**{size=1.4 color=accent}
 
 ---
-
-Marx's bet:
-the system will **BREAK**
+::trans zoom
+::layout center
+Marx's bet: {at=A1 size=.7}
+the system will **BREAK**{size=2 color=accent motion=drop} {at=B2}
+it **cra^1.5|cks~.5|a|part** {at=C3 size=.7}
 
 ---
-
+::style editorial
+::at center
 Agree or not
-**THINK** about who owns what
+**THINK**{size=1.8 color=accent} about who owns what
 
 ---
-
 # Das Kapital
-Start here`;
+Start **here**{color=accent delay=.6 motion=rise}`;
 
-export const DEMO_LYRICS = `[0:02.10] every dull **memories**
+export const DEMO_LYRICS = `@pack smooth
 
-[0:08.50] faces null then **fades** free
+::trans fade
+[0:02.30-0:06.30] every dull **mem|o|ries**{big color=accent step=.22 motion=pop}
 
-[0:18.23] your **spectre**
-[0:19.20] walks these streets
-[0:20.10] with me
+::trans fade
+[0:08.50-0:13.50] faces null then **fades**{big delay=.25 color=accent motion=fade} free
 
-[0:21.47] in **shadows**
-[0:22.87] only i can see
+::style retro
+::emph color
+::trans push
+::at bottom-left
+[0:17.90] your **spectre**{big color=accent motion=rise}
+[0:19.20] walks these streets {at=B2}
+[0:20.10] with me {at=C3}
 
-[0:24.43] every step
-[0:25.93] is a **question** mark
+::style retro
+::emph color
+::trans push
+::at top-right
+[0:21.47] in **shadows**{big color=dim motion=fade} {at=A2}
+[0:22.20] only i {at=B3}
+[0:23.07-0:24.00] can see {at=C2}
 
+::style retro
+::emph color
+::trans push
+[0:24.43] every step {at=A2}
+[0:25.20-0:27.50] is a **question**{big color=accent motion=pop} mark {at=C3}
+
+::style handwritten
+::emph color
+::at A3
 [0:27.90] this city
-[0:28.90] that **forgets**
-[0:30.00] the dark
+[0:28.30] that **forgets**{big color=accent motion=pop}
+[0:29.70-0:31.00] the dark {at=C1 motion=fade}
 
-[0:34.27] **rain** keeps falling slow
+::style handwritten
+::emph color
+::trans push
+::at top
+[0:33.80-0:36.00] **rain**{big color=#7fc8ff} keeps falling slow {motion=rise}
 
-[0:36.57] and i...
-[0:37.57] maybe I'll find **peace**
+::style handwritten
+::emph color
+[0:36.37] and i... {at=A1}
+[0:37.27-0:40.30] maybe I'll find **peace**{size=1.8 color=accent motion=pop} {at=B3}
 
-[0:40.40] in the **hush** between
+::style smooth
+::trans fade
+::at middle-left
+[0:40.40-0:42.40] in the **hush**{big color=dim motion=fade} between
 
+::style smooth
+::at B1
 [0:42.77] the breeze where the lights
-[0:44.77] hum **lullabies**
+[0:44.77-0:46.10] hum **lul|la|bies**{big color=accent step=.25 motion=fade}
 
-[0:46.90] city's feeling **bare**
+::style smooth
+[0:46.90-0:49.00] city's feeling **bare**{size=1.8 motion=fade}
 
-[0:49.37] and im hearing **echoes**
-[0:51.50] call your name
+::style retro
+::emph color
+::trans push
+::at A2
+[0:49.17] and im hearing **echoes**{big color=accent motion=rise}
+[0:51.40-0:53.03] call your name {at=C2 delay=.2}
 
-[0:53.33] rain keeps falling
-[0:54.90-0:59.00] i'm **collapsing**`;
+::style retro
+::emph color
+::at top
+[0:53.13-0:54.60] rain keeps falling {color=#7fc8ff}
+
+::at center
+::trans fade
+[0:54.90-1:02.00] i'm{small} **col^1.2~1.8|laps^1.5~1.8|ing^1.9**{color=accent motion=drop}`;

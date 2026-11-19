@@ -19,6 +19,7 @@ import { SCRIPT_DEFAULTS, scriptSettings, applyMode, DEMO_PRESENTATION, DEMO_LYR
 import { linesToScript, scriptToLines, scriptToLrc } from './scripttext.js';
 import { registerFont } from './textcanvas.js';
 import * as TL from './timeline.js';
+import { parsePptx, slideDurations, slidesToScript } from './pptx.js';
 import { PROP_BY_NAME } from './props.js';
 
 export const MB = 1024 * 1024;
@@ -68,9 +69,18 @@ let audioCtx = null; let audioSrc = null; let playStart = 0;
 const fontNames = new Set();
 
 function loadPrefs() {
-  const def = { theme: 'dark', accent: '#ff6b9d', budgetMB: 256, audioOffsetMs: 0, snap: true, autoKey: true, density: 'auto' };
+  const def = { theme: 'dark', accent: '#ff6b9d', budgetMB: 256, audioOffsetMs: 0, snap: true, autoKey: true, density: 'auto', previewTool: 'select', previewEdit: true, keys: {} };
   try { return { ...def, ...JSON.parse(localStorage.getItem('easymv.prefs') ?? '{}') }; } catch { return def; }
 }
+/** Preview editing tools: 'select' (click + drag + handles), 'move', 'rotate', 'scale'. Editing can be switched off entirely. */
+export const PREVIEW_TOOLS = ['select', 'move', 'rotate', 'scale'];
+export function setPreviewTool(t) { if (PREVIEW_TOOLS.includes(t)) { setPref('previewTool', t); if (!state.prefs.previewEdit) setPref('previewEdit', true); } }
+export function setPreviewEdit(on) { setPref('previewEdit', !!on); }
+export function resetTransform(id) {
+  const def = layerById(id); if (!def || def.locked) return;
+  for (const [prop, v] of [['positionX', 0.5], ['positionY', 0.5], ['scale', 1], ['scaleX', 1], ['scaleY', 1], ['rotation', 0]]) setProperty(id, prop, v, 'Reset transform', `reset:${id}`);
+}
+
 export function setPref(key, value) {
   state.prefs[key] = value;
   try { localStorage.setItem('easymv.prefs', JSON.stringify(state.prefs)); } catch { /* storage blocked */ }
@@ -1191,4 +1201,78 @@ export async function boot() {
   recompile();
   if (typeof VideoEncoder === 'undefined') toast('WebCodecs unavailable: export will not work in this browser.', 6000);
   emit('project', {});
+}
+
+
+// ---------- PowerPoint import ----------
+
+/** Read a .pptx and report what is in it (for the import dialog). Throws a readable Error for unusable files. */
+export async function inspectPptx(file) {
+  const parsed = parsePptx(await file.arrayBuffer());
+  if (!parsed.slides.length) throw new Error('No slides were found in that file.');
+  return parsed;
+}
+
+/**
+ * Turn parsed slides into a script layer plus (optionally) their backgrounds and pictures as timed image layers.
+ * backgrounds: 'keep' (their backgrounds and pictures, text animated on top), 'mix' (the same plus EasyMV dust/glow overlays),
+ * 'auto' (only the text; EasyMV designs every background). timing: { perSlide, fitToSong }.
+ */
+export async function importPptx(parsed, { name = 'Slides', backgrounds = 'keep', perSlide = 0, fitToSong = false } = {}) {
+  const { slides, size, media } = parsed;
+  const total = totalFrames() / fps();
+  const durations = slideDurations(slides, { perSlide, fitTo: fitToSong && state.bridge ? total : 0 });
+  const starts = []; let t = 0; for (const d of durations) { starts.push(t); t += d; }
+  const text = slidesToScript(slides, durations);
+  const id = await addScript(text, 'presentation', name);
+  const def = layerById(id);
+  def.script.bgMode = backgrounds === 'auto' ? 'scenes' : 'none';
+  def.script.fit = 'script';
+  def.script.label = 'Imported slides';
+  structural(); commit('Import slides');
+  if (backgrounds === 'auto') { toast(`Imported ${slides.length} slides. EasyMV designs the backgrounds.`); return id; }
+
+  const toFile = (path) => { const bytes = media.get(path); const base = path.split('/').pop(); return new File([bytes], `pptx_${slug(name)}_${base}`, { type: /\.png$/i.test(base) ? 'image/png' : /\.gif$/i.test(base) ? 'image/gif' : /\.webp$/i.test(base) ? 'image/webp' : 'image/jpeg' }); };
+  const colorFile = async (hex) => {
+    const c = document.createElement('canvas'); c.width = c.height = 8; const g = c.getContext('2d'); g.fillStyle = hex; g.fillRect(0, 0, 8, 8);
+    const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+    return new File([blob], `pptx_${slug(name)}_bg_${hex.slice(1)}.png`, { type: 'image/png' });
+  };
+  const taken = takenIds(); const layers = new Map();   // key -> { def, file, spans }
+  const need = async (key, label, mk, extra) => {
+    if (!layers.has(key)) {
+      const file = await mk(); const lid = uniqueId(slug(file.name), taken); taken.add(lid);
+      layers.set(key, { file, spans: [], def: { id: lid, type: 'static', path: file.name, name: label, ...extra } });
+    }
+    return layers.get(key);
+  };
+  const [rw, rh] = state.project.resolution;
+  const pics = [];
+  for (let i = 0; i < slides.length; i++) {
+    const sl = slides[i]; const span = [Math.round(starts[i] * fps()), Math.round((starts[i] + durations[i]) * fps())];
+    if (sl.bg?.image) (await need(`bg:${sl.bg.image}`, `Slide background`, async () => toFile(sl.bg.image), { fit: 'cover', background: true })).spans.push(span);
+    else if (sl.bg?.color) (await need(`bg:${sl.bg.color}`, `Slide colour ${sl.bg.color}`, () => colorFile(sl.bg.color), { fit: 'cover', background: true })).spans.push(span);
+    for (const im of sl.images) {
+      const L = await need(`pic:${im.path}:${JSON.stringify(im.box)}`, `Slide picture`, async () => toFile(im.path), { fit: 'natural', base: {} });
+      L.spans.push(span); L.box = im.box; pics.push(L);
+    }
+  }
+  const order = [...layers.values()].sort((a, b) => (a.def.background ? 0 : 1) - (b.def.background ? 0 : 1));
+  const defs = [];
+  for (const L of order) { state.files.set(L.file.name, L.file); defs.push(L.def); }
+  if (defs.length) {
+    await pushLayers(defs, 'Import slide images', false);
+    for (const L of order) {   // size and place pictures like the slide did
+      if (!L.box) continue;
+      const a = state.assets[layerIndex(L.def.id)]; if (!a?.width) continue;
+      const k = ((L.box.w / size.w) * rw) / a.width;
+      L.def.base = { positionX: (L.box.x + L.box.w / 2) / size.w, positionY: (L.box.y + L.box.h / 2) / size.h, scaleX: k, scaleY: k };
+    }
+    for (const L of order) TL.setVisibilitySpans(state.project, L.def.id, L.spans, totalFrames());
+    structural(); commit('Place slide images');
+  }
+  if (backgrounds === 'mix') await addEffect('dust');
+  select(id);
+  toast(`Imported ${slides.length} slides${defs.length ? ` and ${defs.length} image layer${defs.length > 1 ? 's' : ''}` : ''}.`);
+  return id;
 }
