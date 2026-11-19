@@ -353,16 +353,19 @@ const srv = http.createServer((q, s) => {
       const before = easymv.core.state.project.elements.length;
       const id = await easymv.core.importPptx(parsed, { name: 'deck', backgrounds: 'keep', perSlide: 4 });
       const st = easymv.core.state.project;
-      return { n: parsed.slides.length, t1: parsed.slides[0].title, sub: parsed.slides[0].subtitle, bg: parsed.slides[0].bg, b2: parsed.slides[1].bullets.map((b) => b.text), pic: parsed.slides[1].images.length,
-        script: st.elements.find((e) => e.id === id).script.text, added: st.elements.length - before, bgMode: st.elements.find((e) => e.id === id).script.bgMode,
-        vis: st.tracks.filter((x) => x.property === 'visible').length, types: st.elements.map((e) => e.type).join(',') };
+      const sl = parsed.slides;
+      return { n: sl.length, t1: sl[0].title, bg: sl[0].bg, blocks2: sl[1].blocks.map((b) => b.paras.map((p) => p.text)), pic: sl[1].items.filter((i) => i.kind === 'pic').length,
+        script: st.elements.find((e) => e.id === id)?.script.text ?? '', added: st.elements.length - before, bgMode: st.elements.find((e) => e.id === id)?.script.bgMode,
+        vis: st.tracks.filter((x) => x.property === 'visible').length, op: st.tracks.filter((x) => x.property === 'opacity').length, len: st.lengthSec, frames: easymv.core.totalFrames(),
+        types: st.elements.map((e) => e.type).join(',') };
     });
-    check('pptx: slides, title, subtitle, background colour read', pp.n === 2 && pp.t1 === 'Big Title' && pp.sub === 'A subtitle' && pp.bg?.color === '#112233', JSON.stringify(pp));
-    check('pptx: bullets with bold and the picture read', pp.b2.length === 2 && pp.b2[1].includes('**bold**') && pp.pic === 1, JSON.stringify(pp.b2));
-    check('pptx: script text has timed scenes', /\[0:00\.00-0:03\.95\] # Big Title/.test(pp.script) && /\[0:04\.00-0:07\.95\] # Second slide/.test(pp.script), pp.script);
-    check('pptx: background colour + picture became layers shown only on their slides', pp.added === 3 && pp.vis >= 2 && pp.bgMode === 'none', JSON.stringify(pp));
-    check('pptx: script stays on top of imported images', pp.types.lastIndexOf('static') < pp.types.indexOf('script'), pp.types);
-    await E(() => easymv.shell.pptxDialog({ name: 'deck.pptx' }, { slides: [{ images: [], bg: null, bullets: [], texts: [] }], size: { w: 1, h: 1 }, media: new Map() }));
+    check('pptx: slides, title and background colour read', pp.n === 2 && pp.t1 === 'Big Title' && pp.bg?.hex === '#112233', JSON.stringify(pp));
+    check('pptx: body paragraphs (with bold) and the picture read', pp.blocks2.flat().some((x) => x.includes('**bold**')) && pp.pic === 1, JSON.stringify(pp.blocks2));
+    check('pptx: text keeps its position (exact-box blocks) and has timed scenes', /\[0:00\.00-[0-9:.]+\] Big Title \{at=[\d.]+:[\d.]+:[\d.]+:[\d.]+ /.test(pp.script) && /role=title/.test(pp.script), pp.script);
+    check('pptx: one art layer per slide, shown on its slide with fade + zoom', pp.added === 3 && pp.vis >= 2 && pp.op >= 1 && pp.bgMode === 'none', JSON.stringify(pp));
+    check('pptx: video length grows to the slides', pp.len >= 4 && pp.frames >= pp.len * 30, JSON.stringify(pp));
+    check('pptx: script stays on top of imported art', pp.types.lastIndexOf('static') < pp.types.indexOf('script'), pp.types);
+    await E(() => easymv.shell.pptxDialog({ name: 'deck.pptx' }, { slides: [{ items: [], bg: { type: 'solid', hex: '#fff' }, blocks: [], hasArt: false }], size: { w: 1, h: 1 }, media: new Map() }));
     await pg.waitForTimeout(200);
     check('pptx dialog opens with background and timing choices', (await pg.locator('dialog[open] select').count()) === 2 && /1 slide/.test(await pg.locator('dialog[open]').innerText()));
     await pg.keyboard.press('Escape'); await pg.waitForTimeout(150);

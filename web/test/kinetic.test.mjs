@@ -159,3 +159,14 @@ test('size per line, word and syllable; others stay normal', () => {
   assert.ok(R('col').size > R('laps').size * 1.5);
   assert.ok(Math.abs(R('laps').size - R('ing').size) < 1e-6);
 });
+
+test('lines sharing an {at} form one block; rect regions, align, max, role, colour', () => {
+  const c = mk('::layout center\nfirst {at=10:20:40:30 align=left max=6 color=#ff0000 role=body}\nsecond {at=10:20:40:30 align=left max=6 color=#ff0000 role=body}\nelsewhere {at=60:70:30:20}');
+  const R = (t) => c.scenes[0].runs.find((r) => r.text.toLowerCase() === t);
+  assert.ok(R('first').y < R('second').y, 'stacked, not overlapping');
+  assert.ok(R('first').x - R('first').w / 2 >= 1280 * 0.1 - 2 && R('second').x + R('second').w / 2 <= 1280 * 0.5 + 2);
+  assert.ok(R('first').y > 720 * 0.2 && R('second').y < 720 * 0.5);
+  assert.equal(R('first').color, '#ff0000');
+  assert.ok(R('first').size <= 720 * 0.06 + 1);
+  assert.ok(R('elsewhere').x > 1280 * 0.6 && R('elsewhere').y > 720 * 0.7);
+});

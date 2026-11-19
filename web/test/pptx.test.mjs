@@ -1,20 +1,35 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { slideDurations, slidesToScript } from '../js/pptx.js';
-import { parseScript } from '../js/kinetic.js';
+import { planSlides, planSlidesAuto, readingSeconds } from '../js/pptx.js';
+import { parseScript, compileScript } from '../js/kinetic.js';
 
-const slides = [{ title: 'A', subtitle: 'sub', bullets: [], texts: [], images: [] },
-  { title: 'B', subtitle: '', bullets: [{ text: 'one', bullet: true }, { text: 'two', bullet: true }], texts: [], images: [] },
-  { title: '', subtitle: '', bullets: [], texts: [], images: [{}] }];
-test('durations: auto, fixed, fit', () => {
-  const a = slideDurations(slides); assert.ok(a.every((d) => d >= 3 && d <= 9));
-  assert.deepEqual(slideDurations(slides, { perSlide: 5 }), [5, 5, 5]);
-  const f = slideDurations(slides, { fitTo: 30 }); assert.ok(Math.abs(f.reduce((x, y) => x + y, 0) - 30) < 1e-9);
+const para = (text, sz = 20, extra = {}) => ({ text, sz, algn: 'l', color: null, bullet: false, lvl: 0, ...extra });
+const blk = (kind, box, paras) => ({ kind, box, paras, anchor: 'top' });
+const E = 12700; const SZ = { w: 960 * E, h: 540 * E };
+const lorem = (n) => Array.from({ length: n }, (_, i) => `word${i}`).join(' ');
+const parsed = { size: SZ, media: new Map(), slides: [
+  { bg: { type: 'solid', hex: '#fff' }, items: [], hasArt: false, blocks: [blk('title', { x: 60 * E, y: 40 * E, w: 840 * E, h: 80 * E }, [para('Short title', 40)]), blk('body', { x: 60 * E, y: 150 * E, w: 840 * E, h: 330 * E }, [para('one', 24), para('two', 24)])] },
+  { bg: { type: 'solid', hex: '#fff' }, items: [], hasArt: false, blocks: [blk('title', { x: 60 * E, y: 40 * E, w: 840 * E, h: 80 * E }, [para('Wordy', 40)]), blk('body', { x: 60 * E, y: 150 * E, w: 840 * E, h: 330 * E }, Array.from({ length: 12 }, (_, i) => para(`Paragraph ${i} ${lorem(18)}`, 20)))] },
+  { bg: { type: 'solid', hex: '#fff' }, items: [{ kind: 'pic' }], hasArt: true, blocks: [] },
+] };
+
+test('reading time grows with words but is bounded', () => {
+  assert.ok(readingSeconds(5) < readingSeconds(60)); assert.ok(readingSeconds(10000) <= 24); assert.ok(readingSeconds(1) >= 2.6);
 });
-test('script: one timed scene per text slide, picture-only slides keep their time', () => {
-  const d = [4, 4, 4]; const t = slidesToScript(slides, d);
-  const sc = parseScript(t);
-  assert.equal(sc.scenes.length, 2);
-  assert.match(t, /\[0:00\.00-0:03\.95\] # A/);
-  assert.match(t, /\[0:04\.00-0:07\.95\] # B\n- one\n- two/);
+test('wordy slides are split into pages instead of shrinking; time adapts; picture-only slides hold', () => {
+  const p = planSlides(parsed, { W: 1280, H: 720 });
+  assert.ok(p.pages >= 3, `pages ${p.pages}`);
+  assert.ok(p.spans[1].t1 - p.spans[1].t0 > 2 * (p.spans[0].t1 - p.spans[0].t0), 'wordy slide runs longer');
+  assert.equal(Math.round((p.spans[2].t1 - p.spans[2].t0) * 10) / 10, 3);
+  assert.ok(p.total > 30, 'long decks are not capped at 30 s');
+  const c = compileScript(parseScript(p.text), { W: 1280, H: 720, measure: (a, f, w, px) => a.length * px * 0.5, bgMode: 'none' });
+  for (const s of c.scenes) for (const r of s.runs) assert.ok(r.size >= 720 * 0.02, `tiny text ${r.size} "${r.text}"`);
+});
+test('fixed seconds and fit-to-song are honoured', () => {
+  assert.ok(Math.abs(planSlides(parsed, { perSlide: 6 }).spans[0].t1 - 6) < 1e-6);
+  assert.ok(Math.abs(planSlides(parsed, { fitTo: 90 }).total - 90) < 1e-6);
+});
+test('auto layout: plain script, paged when wordy', () => {
+  const p = planSlidesAuto(parsed, {});
+  assert.match(p.text, /# Short title/); assert.ok(p.pages >= 3);
 });

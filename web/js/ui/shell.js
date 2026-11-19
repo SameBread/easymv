@@ -450,18 +450,18 @@ export function createShell(root, dv) {
   shell.pptxDialog = (f, p) => pptxDialog(f, p);
   function pptxDialog(file, parsed) {
     const opt = { backgrounds: 'keep', timing: 'auto', secs: 5 };
-    const pics = parsed.slides.filter((s) => s.images.length).length; const bgs = parsed.slides.filter((s) => s.bg).length;
+    const pics = parsed.slides.filter((s) => s.items.some((i) => i.kind === 'pic')).length; const art = parsed.slides.filter((s) => s.hasArt).length;
     const hasSong = !!state.bridge;
     const timingOpts = [['auto', 'Automatic (reading time per slide)'], ['fixed', 'Same seconds for every slide']];
     if (hasSong) timingOpts.push(['fit', 'Stretch to the song length']);
     const secs = numField({ label: 'Seconds per slide', value: 5, min: 1, max: 60, step: 0.5, suffix: 's', onChange: (v, f) => { if (f) opt.secs = v; } });
     secs.el.hidden = true;
     dialog({ title: 'Import PowerPoint', wide: true, body: [
-      h('p', `${file.name}: ${parsed.slides.length} slide${parsed.slides.length === 1 ? '' : 's'}, ${bgs} with a background, ${pics} with pictures.`),
+      h('p', `${file.name}: ${parsed.slides.length} slide${parsed.slides.length === 1 ? '' : 's'}, ${art} with graphics or a background, ${pics} with pictures.`),
       h('div.fgrid',
-        selectField({ label: 'Backgrounds', value: 'keep', options: [['keep', 'Keep the PowerPoint backgrounds and pictures'], ['mix', 'Keep them and mix in EasyMV effects'], ['auto', 'EasyMV visuals only (text from the slides)']], onChange: (v) => { opt.backgrounds = v; } }).el,
+        selectField({ label: 'Backgrounds', value: 'keep', options: [['keep', 'Keep the slide look (graphics + animated text in place)'], ['mix', 'Keep the slide look and add EasyMV effects'], ['auto', 'EasyMV visuals only (just the text, laid out by EasyMV)']], onChange: (v) => { opt.backgrounds = v; } }).el,
         selectField({ label: 'Timing', value: 'auto', options: timingOpts, onChange: (v) => { opt.timing = v; secs.el.hidden = v !== 'fixed'; } }).el, secs.el),
-      h('p.muted', 'Titles, subtitles, bullets and bold words become animated text; you can edit the result in the Script panel. Slides are timed from 0:00, so move the script layer on the timeline if the music starts later.')],
+      h('p.muted', 'Backgrounds, panels, shapes, pictures and tables become one artwork image per slide. Text becomes animated text placed where it sat on the slide; wordy boxes are split into readable pages. The video grows to fit all slides (no song needed). Slides start at 0:00, so move the layers on the timeline if the music starts later.')],
     actions: [{ label: 'Cancel' }, { label: 'Import', variant: 'filled', run: async () => {
       try { await core.importPptx(parsed, { name: file.name.replace(/\.pptx$/i, ''), backgrounds: opt.backgrounds, perSlide: opt.timing === 'fixed' ? opt.secs : 0, fitToSong: opt.timing === 'fit' }); shell.showPanel('script'); }
       catch (e) { core.toast(e.message || 'Import failed.', 5000); return false; } } }] });

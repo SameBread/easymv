@@ -19,7 +19,7 @@ import { SCRIPT_DEFAULTS, scriptSettings, applyMode, DEMO_PRESENTATION, DEMO_LYR
 import { linesToScript, scriptToLines, scriptToLrc } from './scripttext.js';
 import { registerFont } from './textcanvas.js';
 import * as TL from './timeline.js';
-import { parsePptx, slideDurations, slidesToScript } from './pptx.js';
+import { parsePptx, planSlides, planSlidesAuto, renderSlideArt } from './pptx.js';
 import { PROP_BY_NAME } from './props.js';
 
 export const MB = 1024 * 1024;
@@ -107,7 +107,7 @@ export const layerById = (id) => state.project?.elements.find((e) => e.id === id
 export const layerIndex = (id) => state.project?.elements.findIndex((e) => e.id === id) ?? -1;
 export const layerName = (def) => def.name ?? def.id;
 export const fps = () => state.project.videoFps;
-export const totalFrames = () => state.bridge?.totalFrames ?? Math.round(30 * state.project.videoFps);
+export const totalFrames = () => state.bridge?.totalFrames ?? Math.round(Math.max(30, state.project.lengthSec ?? 0) * state.project.videoFps);
 export const sources = () => ['master', ...state.stemFiles.map((s) => s.id)];
 
 export const LAYER_TYPE_INFO = {
@@ -158,7 +158,7 @@ export function normalize(p) {
 
 /** Project as the engine should see it (UI-only data removed). */
 export function strip(p) {
-  const { sections, ...rest } = p;
+  const { sections, lengthSec, ...rest } = p;
   return {
     ...rest,
     // the engine only routes numbers: render-only choices (blend mode, script type) are hidden from it so an older engine build still accepts them
@@ -1214,65 +1214,93 @@ export async function inspectPptx(file) {
 }
 
 /**
- * Turn parsed slides into a script layer plus (optionally) their backgrounds and pictures as timed image layers.
- * backgrounds: 'keep' (their backgrounds and pictures, text animated on top), 'mix' (the same plus EasyMV dust/glow overlays),
- * 'auto' (only the text; EasyMV designs every background). timing: { perSlide, fitToSong }.
+ * Turn parsed slides into: (1) one artwork image per slide (backgrounds, panels, shapes, pictures, tables, master decorations),
+ * each shown only while its slide plays with a soft fade and slow zoom; (2) a script layer whose text sits where it sat on the
+ * slide, with wordy boxes split into readable pages; (3) a video length that grows to fit every slide.
+ * backgrounds: 'keep' | 'mix' (keep + EasyMV dust) | 'auto' (EasyMV designs the visuals; only the text is used).
  */
-export async function importPptx(parsed, { name = 'Slides', backgrounds = 'keep', perSlide = 0, fitToSong = false } = {}) {
-  const { slides, size, media } = parsed;
-  const total = totalFrames() / fps();
-  const durations = slideDurations(slides, { perSlide, fitTo: fitToSong && state.bridge ? total : 0 });
-  const starts = []; let t = 0; for (const d of durations) { starts.push(t); t += d; }
-  const text = slidesToScript(slides, durations);
-  const id = await addScript(text, 'presentation', name);
-  const def = layerById(id);
-  def.script.bgMode = backgrounds === 'auto' ? 'scenes' : 'none';
-  def.script.fit = 'script';
-  def.script.label = 'Imported slides';
-  structural(); commit('Import slides');
-  if (backgrounds === 'auto') { toast(`Imported ${slides.length} slides. EasyMV designs the backgrounds.`); return id; }
-
-  const toFile = (path) => { const bytes = media.get(path); const base = path.split('/').pop(); return new File([bytes], `pptx_${slug(name)}_${base}`, { type: /\.png$/i.test(base) ? 'image/png' : /\.gif$/i.test(base) ? 'image/gif' : /\.webp$/i.test(base) ? 'image/webp' : 'image/jpeg' }); };
-  const colorFile = async (hex) => {
-    const c = document.createElement('canvas'); c.width = c.height = 8; const g = c.getContext('2d'); g.fillStyle = hex; g.fillRect(0, 0, 8, 8);
-    const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
-    return new File([blob], `pptx_${slug(name)}_bg_${hex.slice(1)}.png`, { type: 'image/png' });
-  };
-  const taken = takenIds(); const layers = new Map();   // key -> { def, file, spans }
-  const need = async (key, label, mk, extra) => {
-    if (!layers.has(key)) {
-      const file = await mk(); const lid = uniqueId(slug(file.name), taken); taken.add(lid);
-      layers.set(key, { file, spans: [], def: { id: lid, type: 'static', path: file.name, name: label, ...extra } });
-    }
-    return layers.get(key);
-  };
+export async function importPptx(parsed, { name = 'Slides', backgrounds = 'keep', perSlide = 0, fitToSong = false, animate = true, onProgress } = {}) {
+  const { slides } = parsed;
   const [rw, rh] = state.project.resolution;
-  const pics = [];
-  for (let i = 0; i < slides.length; i++) {
-    const sl = slides[i]; const span = [Math.round(starts[i] * fps()), Math.round((starts[i] + durations[i]) * fps())];
-    if (sl.bg?.image) (await need(`bg:${sl.bg.image}`, `Slide background`, async () => toFile(sl.bg.image), { fit: 'cover', background: true })).spans.push(span);
-    else if (sl.bg?.color) (await need(`bg:${sl.bg.color}`, `Slide colour ${sl.bg.color}`, () => colorFile(sl.bg.color), { fit: 'cover', background: true })).spans.push(span);
-    for (const im of sl.images) {
-      const L = await need(`pic:${im.path}:${JSON.stringify(im.box)}`, `Slide picture`, async () => toFile(im.path), { fit: 'natural', base: {} });
-      L.spans.push(span); L.box = im.box; pics.push(L);
+  const songSec = state.bridge ? totalFrames() / fps() : 0;
+  const fitTo = fitToSong && songSec ? songSec : 0;
+  let plan; const arts = []; const layers = [];
+
+  if (backgrounds === 'auto') plan = planSlidesAuto(parsed, { perSlide, fitTo });
+  else {
+    const AW = Math.min(1600, Math.max(1280, rw)); const AH = Math.round((AW * rh) / rw);
+    const solidKey = new Map();
+    for (let i = 0; i < slides.length; i++) {
+      onProgress?.(i, slides.length);
+      const sl = slides[i];
+      if (sl.hidden) { arts.push(null); continue; }
+      const plain = !sl.items.length && sl.bg.type === 'solid';
+      if (plain && solidKey.has(sl.bg.hex)) { arts.push(solidKey.get(sl.bg.hex)); continue; }
+      const { canvas, tf } = await renderSlideArt(parsed, sl, AW, AH);
+      const g = canvas.getContext('2d');
+      const lum = (r) => {   // average brightness under a text box (pixels of the art canvas)
+        const x0 = Math.max(0, Math.floor(r.x * AW / rw)); const y0 = Math.max(0, Math.floor(r.y * AH / rh));
+        const w = Math.max(1, Math.min(AW - x0, Math.floor(r.w * AW / rw))); const h = Math.max(1, Math.min(AH - y0, Math.floor(r.h * AH / rh)));
+        const d = g.getImageData(x0, y0, w, h).data; let sum = 0; let n = 0;
+        for (let p = 0; p < d.length; p += 4 * Math.max(1, Math.floor(d.length / 4 / 400))) { sum += (0.2126 * d[p] + 0.7152 * d[p + 1] + 0.0722 * d[p + 2]) / 255; n++; }
+        return n ? sum / n : 0.5;
+      };
+      // text positions are in project pixels; the art canvas has the same aspect, so only a scale differs
+      const info = { canvas, tf: { s: tf.s * (rw / AW), ox: tf.ox * (rw / AW), oy: tf.oy * (rh / AH) }, lum };
+      if (plain) info.key = `solid:${sl.bg.hex}`;
+      arts.push(info); if (plain) solidKey.set(sl.bg.hex, info);
     }
+    plan = planSlides(parsed, { W: rw, H: rh, perSlide, fitTo, art: arts });
   }
-  const order = [...layers.values()].sort((a, b) => (a.def.background ? 0 : 1) - (b.def.background ? 0 : 1));
-  const defs = [];
-  for (const L of order) { state.files.set(L.file.name, L.file); defs.push(L.def); }
-  if (defs.length) {
-    await pushLayers(defs, 'Import slide images', false);
-    for (const L of order) {   // size and place pictures like the slide did
-      if (!L.box) continue;
-      const a = state.assets[layerIndex(L.def.id)]; if (!a?.width) continue;
-      const k = ((L.box.w / size.w) * rw) / a.width;
-      L.def.base = { positionX: (L.box.x + L.box.w / 2) / size.w, positionY: (L.box.y + L.box.h / 2) / size.h, scaleX: k, scaleY: k };
+
+  if (!state.bridge) state.project.lengthSec = Math.ceil(plan.total + 1);
+  // script layer
+  let id = null;
+  if (/\[\d+:\d/.test(plan.text)) {
+    id = await addScript(plan.text, 'presentation', name);
+    const def = layerById(id);
+    Object.assign(def.script, { bgMode: backgrounds === 'auto' ? 'scenes' : 'none', fit: 'script', label: 'Imported slides' });
+    if (backgrounds !== 'auto') def.script.pack = 'editorial';
+    def.script.pack = backgrounds === 'auto' ? 'punchy' : 'editorial';
+  }
+
+  // artwork layers
+  if (backgrounds !== 'auto') {
+    const taken = takenIds(); const defs = []; const shared = new Map();
+    for (let i = 0; i < slides.length; i++) {
+      const a = arts[i]; const span = plan.spans[i]; if (!a || !span) continue;
+      const fr = [Math.round(span.t0 * fps()), Math.round(span.t1 * fps())];
+      if (a.key && shared.has(a.key)) { shared.get(a.key).spans.push(fr); continue; }
+      const blob = await (a.canvas.convertToBlob ? a.canvas.convertToBlob({ type: 'image/png' }) : new Promise((r) => a.canvas.toBlob(r, 'image/png')));
+      const file = new File([blob], `pptx_${slug(name)}_slide${String(i + 1).padStart(3, '0')}.png`, { type: 'image/png' });
+      const lid = uniqueId(slug(file.name), taken); taken.add(lid);
+      const L = { def: { id: lid, type: 'static', path: file.name, fit: 'cover', name: `Slide ${i + 1} art` }, file, spans: [fr], solid: !!a.key };
+      state.files.set(file.name, file); defs.push(L); layers.push(L);
+      if (a.key) shared.set(a.key, L);
     }
-    for (const L of order) TL.setVisibilitySpans(state.project, L.def.id, L.spans, totalFrames());
-    structural(); commit('Place slide images');
+    if (defs.length) {
+      await pushLayers(defs.map((d) => d.def), 'Import slide art', false);
+      const fade = 0.4;
+      for (const L of defs) {
+        const f = (x) => Math.round(x * fps());
+        const spans = L.spans.map(([a, b]) => [a, b + (L.solid ? 0 : f(fade))]);
+        TL.setVisibilitySpans(state.project, L.def.id, spans, Math.max(totalFrames(), f(plan.total + 2)));
+        if (animate && !L.solid) {
+          const op = []; const sc = [];
+          for (const [a, b] of L.spans) {
+            op.push({ f: a, v: 0, interp: 'linear' }, { f: a + f(fade), v: 1, interp: 'linear' }, { f: Math.max(a + f(fade), b), v: 1, interp: 'linear' }, { f: b + f(fade), v: 0, interp: 'linear' });
+            sc.push({ f: a, v: 1, interp: 'linear' }, { f: b + f(fade), v: 1.045, interp: 'linear' });
+          }
+          state.project.tracks.push({ element: L.def.id, property: 'opacity', mode: 'override', mix: 0.5, keys: op });
+          state.project.tracks.push({ element: L.def.id, property: 'scale', mode: 'override', mix: 0.5, keys: sc });
+        }
+      }
+    }
+    if (backgrounds === 'mix') await addEffect('dust');
   }
-  if (backgrounds === 'mix') await addEffect('dust');
-  select(id);
-  toast(`Imported ${slides.length} slides${defs.length ? ` and ${defs.length} image layer${defs.length > 1 ? 's' : ''}` : ''}.`);
+  structural(); commit('Import slides');
+  if (id) select(id);
+  const note = state.bridge && !fitTo && plan.total > songSec + 1 ? ` The slides run ${Math.round(plan.total)} s but the song is ${Math.round(songSec)} s; choose “Stretch to the song length” to fit them.` : '';
+  toast(`Imported ${slides.length} slides (${plan.pages} text pages, ${Math.round(plan.total)} s).${note}`, note ? 7000 : 4000);
   return id;
 }

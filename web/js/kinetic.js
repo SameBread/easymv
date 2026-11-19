@@ -155,6 +155,10 @@ export function parseMods(str) {
     else if (k === 'step' && v != null && Number(v) > 0) m.step = Math.min(3, Number(v));
     else if (k === 'delay' && v != null && Number.isFinite(Number(v))) m.delay = Number(v);
     else if (k === 'motion' && v) m.motion = v;
+    else if (k === 'align' && /^(left|center|centre|right)$/i.test(v ?? '')) m.align = v.toLowerCase() === 'centre' ? 'center' : v.toLowerCase();
+    else if (k === 'anchor' && /^(top|middle|bottom)$/i.test(v ?? '')) m.anchor = v.toLowerCase();
+    else if (k === 'max' && v != null && Number(v) > 0) m.max = Math.min(40, Number(v));
+    else if (k === 'role' && v) m.role = v.toLowerCase();
     else if (/^[A-Ca-c][1-3]$/.test(k) && v == null) m.at = tok;
   }
   return m;
@@ -202,13 +206,20 @@ const cell = (t) => [t.charCodeAt(0) & 31, Number(t[1])].map((v, i) => v - 1) ;
 export function parseRegion(str) {
   if (str == null) return null;
   const v = String(str).trim().toLowerCase().replace(/[_\s]+/g, '-');
+  const rc = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?):(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(v);   // x:y:w:h in percent of the canvas
+  if (rc) return { rect: [+rc[1], +rc[2], +rc[3], +rc[4]] };
   if (NAMED[v]) { const [c0, c1, r0, r1] = NAMED[v]; return { c0, c1, r0, r1 }; }
   const m = /^([abc][1-3])(?:-([abc][1-3]))?$/.exec(v);
   if (!m) return null;
   const a = cell(m[1]); const b = m[2] ? cell(m[2]) : a;
   return { c0: Math.min(a[0], b[0]), c1: Math.max(a[0], b[0]), r0: Math.min(a[1], b[1]), r1: Math.max(a[1], b[1]) };
 }
-function regionBox(rg, safe) {
+function regionBox(rg, safe, full) {
+  if (rg.rect && full) {
+    const [px, py, pw, ph] = rg.rect;
+    return { x: (px / 100) * full.W, y: (py / 100) * full.H, w: Math.max(8, (pw / 100) * full.W), h: Math.max(8, (ph / 100) * full.H), align: 'center', anchorY: 'middle' };
+  }
+  if (rg.rect) return regionBox({ c0: 0, c1: 2, r0: 0, r1: 2 }, safe);
   const cw = safe.w / 3; const rh = safe.h / 3;
   const box = { x: safe.x + rg.c0 * cw, y: safe.y + rg.r0 * rh, w: (rg.c1 - rg.c0 + 1) * cw, h: (rg.r1 - rg.r0 + 1) * rh };
   box.align = rg.c0 === rg.c1 && rg.c0 === 0 ? 'left' : rg.c0 === rg.c1 && rg.c0 === 2 ? 'right' : 'center';
@@ -245,6 +256,8 @@ export function parseScript(text) {
     if (!words.length) continue;
     if (t != null && sc.t == null && !sc.lines.length) sc.t = t;
     sc.src.push(ln);
+    if (lineMod?.color) for (const w of words) w.mod = { color: lineMod.color, ...(w.mod ?? {}) };
+    if (lineMod?.role && ROLE_SCALE[lineMod.role]) role = lineMod.role;
     sc.lines.push({ words, role, t: t != null && sc.lines.length ? t : null, t1, idx: ln, tag: t, tag1: t1, ...(lineMod?.at ? { at: lineMod.at } : {}), ...(lineMod && Object.keys(lineMod).length ? { mod: lineMod } : {}) });
   }
   flush();
@@ -646,7 +659,7 @@ export function compileScript(script, ctx) {
     // placement: scene-level region (::at / @at), plus lines / words that carry their own {at=..}
     const sceneRg = parseRegion(sc.dir.at ?? (sc.dir.at === undefined ? opts.at : null));
     let sbox = box; let salign = sc.dir.align ?? null;
-    if (sceneRg) { sbox = regionBox(sceneRg, box); sbox.cap = H * 0.22; salign ??= sbox.align; }
+    if (sceneRg) { sbox = regionBox(sceneRg, box, { W, H }); sbox.cap = H * 0.22; salign ??= sbox.align; }
     const mainLines = []; const map = [];
     sc.lines.forEach((ln, li) => {
       if (ln.at && parseRegion(ln.at)) return;
@@ -679,19 +692,25 @@ export function compileScript(script, ctx) {
     }
     const pal = planPalette(SP, sc, i, seed, prevPal, ov); prevPal = pal.idx;
     // lines and words with their own spot
+    // lines sharing the same {at=..} are one block (so a text box with several paragraphs stays together)
+    const groups = new Map();
+    sc.lines.forEach((ln, li) => { if (ln.at && parseRegion(ln.at)) { if (!groups.has(ln.at)) groups.set(ln.at, []); groups.get(ln.at).push(li); } });
+    for (const [at, lis] of groups) {
+      const b = regionBox(parseRegion(at), box, { W, H }); const m0 = sc.lines[lis[0]].mod ?? {};
+      if (m0.align) b.align = m0.align; if (m0.anchor) b.anchorY = m0.anchor;
+      b.cap = m0.max ? (H * m0.max) / 100 : H * 0.2;
+      const kept = lis.filter((li) => sc.lines[li].words.some((w) => !(w.mod?.at && parseRegion(w.mod.at))));
+      const ls = kept.map((li) => ({ ...sc.lines[li], words: sc.lines[li].words.filter((w) => !(w.mod?.at && parseRegion(w.mod.at))) }));
+      if (!ls.length) continue;
+      const { b: blk } = fitBlock(scx, ls, b, b.align);
+      for (const r of placeBlock(scx, ls, blk, b, { align: b.align, anchorY: b.anchorY })) lay.runs.push({ ...r, li: kept[r.li] });
+    }
     sc.lines.forEach((ln, li) => {
       const lrg = ln.at ? parseRegion(ln.at) : null;
-      if (lrg) {
-        const b = regionBox(lrg, box); b.cap = H * 0.2;
-        const one = { ...ln, words: ln.words.filter((w) => !(w.mod?.at && parseRegion(w.mod.at))) };
-        if (!one.words.length) return;
-        const { b: blk } = fitBlock(scx, [one], b, b.align);
-        for (const r of placeBlock(scx, [one], blk, b, { align: b.align, anchorY: b.anchorY })) lay.runs.push({ ...r, li });
-      }
       ln.words.forEach((w, wi) => {
         const wrg = w.mod?.at ? parseRegion(w.mod.at) : null;
         if (!wrg || lrg) return;
-        const b = regionBox(wrg, box);
+        const b = regionBox(wrg, box, { W, H });
         const ref = lay.runs.find((r) => r.li === li);
         const size = (ref ? ref.size / (ref.mod?.size ?? 1) : Math.min(b.h * 0.5, H * 0.12)) * (w.mod.size ?? 1);
         const text = scx.text(ln.role, w.t); const wd = scx.width(text, ln.role, size);
