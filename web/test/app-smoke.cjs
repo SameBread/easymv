@@ -360,7 +360,7 @@ const srv = http.createServer((q, s) => {
         types: st.elements.map((e) => e.type).join(',') };
     });
     check('pptx: slides, title and background colour read', pp.n === 2 && pp.t1 === 'Big Title' && pp.bg?.hex === '#112233', JSON.stringify(pp));
-    check('pptx: body paragraphs (with bold) and the picture read', pp.blocks2.flat().some((x) => x.includes('**bold**')) && pp.pic === 1, JSON.stringify(pp.blocks2));
+    check('pptx: body paragraphs (with real bold tags) and the picture read', pp.blocks2.flat().some((x) => x.includes('<b>bold</b>')) && pp.pic === 1, JSON.stringify(pp.blocks2));
     check('pptx: text keeps its position (exact-box blocks) and has timed scenes', /\[0:00\.00-[0-9:.]+\] Big Title \{at=[\d.]+:[\d.]+:[\d.]+:[\d.]+ /.test(pp.script) && /role=title/.test(pp.script), pp.script);
     check('pptx: one art layer per slide, shown on its slide with fade + zoom', pp.added === 3 && pp.vis >= 2 && pp.op >= 1 && pp.bgMode === 'none', JSON.stringify(pp));
     check('pptx: video length grows to the slides', pp.len >= 4 && pp.frames >= pp.len * 30, JSON.stringify(pp));
@@ -371,6 +371,33 @@ const srv = http.createServer((q, s) => {
     await pg.keyboard.press('Escape'); await pg.waitForTimeout(150);
     const bad = await E(async () => { try { await easymv.core.inspectPptx(new File([new Uint8Array([1, 2, 3])], 'x.pptx')); return 'no error'; } catch (e) { return e.message; } });
     check('pptx: a broken file gives a readable error', /not a valid/.test(bad), bad);
+
+
+    // ---- v1: native Shape / Chart / Table layers, usable without any slides ----
+    const vec = await E(async () => {
+      const c = easymv.core; const n0 = c.state.project.elements.length;
+      easymv.shell.showPanel('inspector'); const sid = await c.addShape('star5', { text: '<b>Hi</b>' }); const cid = await c.addChart('pie'); const tid = await c.addTable();
+      const els = c.state.project.elements; const types = els.slice(n0).map((e) => e.type);
+      c.select(cid); await new Promise((r) => setTimeout(r, 300));
+      const inspChart = document.body.innerText;
+      c.select(tid); await new Promise((r) => setTimeout(r, 300));
+      const inspTable = document.body.innerText;
+      c.select(sid); await new Promise((r) => setTimeout(r, 300));
+      const inspShape = document.body.innerText;
+      const payload = JSON.stringify(c.strip(c.state.project).elements.filter((e) => e.id === sid || e.id === cid || e.id === tid).map((e) => e.type));
+      c.updateLayer(cid, { 'chart.title': 'Hello' }, 'x');
+      const titled = c.layerById(cid).chart.title;
+      c.select(null);
+      const hasReveal = !!document.querySelector('.panel-inspector') ;
+      return { types, inspChart, inspTable, inspShape, titled, payload, hasReveal, n: els.length - n0 };
+    });
+    check('vector: shape, chart and table layers can be added anywhere', vec.types.join() === 'shape,chart,table', vec.types.join());
+    check('vector: inspector shows shape, chart and table editors', /fill & outline/i.test(vec.inspShape) && /chart look/i.test(vec.inspChart) && /table look/i.test(vec.inspTable), JSON.stringify([vec.inspShape.slice(0, 200), vec.inspChart.slice(0, 200), vec.inspTable.slice(0, 200)]));
+    check('vector: chart edits apply; engine sees them as plain layers', vec.titled === 'Hello' && vec.payload === '["lyrics","lyrics","lyrics"]', vec.payload);
+    await pg.waitForTimeout(500);
+    const addMenu = await E(() => { easymv.shell.showAddMenu(document.body); return [...document.querySelectorAll('[role=menu] [role=menuitem], .menu .menu-item')].map((x) => x.innerText).join('|'); });
+    check('vector: Add menu offers Shape, Chart and Table', /Shape/.test(addMenu) && /Chart/.test(addMenu) && /Table/.test(addMenu), addMenu);
+    await pg.keyboard.press('Escape');
 
     // Export dialog opens and mentions size
     await E(async () => { if (!easymv.core.state.bridge) { easymv.core.setMaster(new File([new Uint8Array(64)], 's.wav', { type: 'audio/wav' })); await easymv.core.analyze(); } });

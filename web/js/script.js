@@ -35,10 +35,10 @@ export function scriptSettings(def) {
 }
 
 let ctx = null;
-export function measureText(text, font, weight, px) {
+export function measureText(text, font, weight, px, italic = false) {
   ctx ??= document.createElement('canvas').getContext('2d');
   const f = migrateFont(font);
-  ctx.font = `${nearestWeight(f, weight)} ${px}px ${familyCss(f)}`;
+  ctx.font = `${italic ? 'italic ' : ''}${nearestWeight(f, weight)} ${px}px ${familyCss(f)}`;
   return ctx.measureText(text).width;
 }
 

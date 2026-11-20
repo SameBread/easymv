@@ -159,22 +159,32 @@ export function parseMods(str) {
     else if (k === 'anchor' && /^(top|middle|bottom)$/i.test(v ?? '')) m.anchor = v.toLowerCase();
     else if (k === 'max' && v != null && Number(v) > 0) m.max = Math.min(40, Number(v));
     else if (k === 'role' && v) m.role = v.toLowerCase();
+    else if (k === 'bold' || k === 'italic' || k === 'underline' || k === 'strike') (m.st ??= {})[k[0]] = v !== '0' && v !== 'off';
     else if (/^[A-Ca-c][1-3]$/.test(k) && v == null) m.at = tok;
   }
   return m;
 }
 
 function parseWords(text) {
-  const words = []; let on = false;
+  const words = []; let on = false; const st = { b: false, i: false, u: false, s: false };
   const re = /\[([^\]]+)\]\{([^}]*)\}|(\S+?)\{([^}]*)\}|\S+/g;
   const push = (raw, mod) => {
     for (const w0 of raw.split(/\s+/).filter(Boolean)) {
       let tok = w0; let emph = on;
+      // style tags <b> <i> <u> <s> (and __u__, ~~s~~) change the look only; ** is still the emphasis marker
+      const live = { ...st }; let any = false;
+      tok = tok.replace(/<(\/?)([biusBIUS])>/g, (_, c, k) => { st[k.toLowerCase()] = !c; if (!c) live[k.toLowerCase()] = true; any = true; return ''; });
+      if (tok.startsWith('__') && tok.length > 2) { tok = tok.slice(2); st.u = true; live.u = true; any = true; }
+      if (tok.endsWith('__') && tok.length > 2) { tok = tok.slice(0, -2); st.u = false; any = true; }
+      if (tok.startsWith('~~') && tok.length > 2) { tok = tok.slice(2); st.s = true; live.s = true; any = true; }
+      if (tok.endsWith('~~') && tok.length > 2) { tok = tok.slice(0, -2); st.s = false; any = true; }
       if (tok.startsWith('**')) { on = true; emph = true; tok = tok.slice(2); }
       if (tok.endsWith('**')) { tok = tok.slice(0, -2); on = false; }
       if (!tok) continue;
       const w = { t: tok, emph };
       if (mod) w.mod = mod;
+      const sty = { ...live, ...(mod?.st ?? {}) };
+      if (sty.b || sty.i || sty.u || sty.s) w.st = sty;
       if (tok.includes('|')) {   // syllables: col|laps~.6|ing  (~n = seconds before the next one; default mod step or 0.28)
         const parts = tok.split('|').filter(Boolean).map((p) => { const m = /^(.*?)(?:\^(\d*\.?\d+))?(?:~(\d*\.?\d+))?$/.exec(p); return { t: m[1], f: m[2] != null ? Math.min(4, Number(m[2])) : 1, d: m[3] != null ? Number(m[3]) : null }; }).filter((x) => x.t);
         if (parts.length > 1) { w.t = parts.map((x) => x.t).join(''); w.syl = parts; }
@@ -240,14 +250,23 @@ export function parseScript(text) {
     let m;
     if ((m = /^@(\w+)\s+(.*)$/.exec(line))) { options[m[1]] = m[2].trim(); continue; }
     if ((m = /^::(\w+)\s*(.*)$/.exec(line))) { const o = open(); o.dir[m[1]] = m[2].trim(); o.dirIdx[m[1]] = ln; o.src.push(ln); continue; }
-    let t = null; let t1 = null; let body = line;
-    if ((m = TIME_TAG.exec(body))) { t = tsec(m[1], m[2], m[3]); if (m[4] != null) t1 = tsec(m[4], m[5], m[6]); body = body.slice(m[0].length); }
-    let role = null;
-    if ((m = /^(#{1,2})\s+(.*)$/.exec(body))) { if (cur?.lines.length) flush(); role = m[1].length === 1 ? 'title' : 'sub'; body = m[2]; }
-    else if ((m = /^[-*•]\s+(.*)$/.exec(body))) { role = 'bullet'; body = m[1]; }
-    else if ((m = /^\d+[.)]\s+(.*)$/.exec(body))) { role = 'bullet'; body = m[1]; }
-    else if ((m = /^>\s*(.*)$/.exec(body))) { role = 'quote'; body = m[1]; }
-    else if ((m = /^--\s*(.*)$/.exec(body))) { role = 'cite'; body = m[1]; }
+    // One grammar for every line:  [time] marker text {mods}   (marker and time may come in either order)
+    //   time   [0:12.5]  [0:12.5-0:15]        marker  #  ##  -  1.  >  --
+    let t = null; let t1 = null; let body = line; let role = null;
+    const takeTime = () => { if (t == null && (m = TIME_TAG.exec(body))) { t = tsec(m[1], m[2], m[3]); if (m[4] != null) t1 = tsec(m[4], m[5], m[6]); body = body.slice(m[0].length); return true; } return false; };
+    const takeMarker = () => {
+      if (role) return false;
+      if ((m = /^(#{1,2})\s+(.*)$/.exec(body))) { role = m[1].length === 1 ? 'title' : 'sub'; body = m[2]; return true; }
+      if ((m = /^[-*•]\s+(.*)$/.exec(body))) { role = 'bullet'; body = m[1]; return true; }
+      if ((m = /^\d+[.)]\s+(.*)$/.exec(body))) { role = 'bullet'; body = m[1]; return true; }
+      if ((m = /^>\s*(.*)$/.exec(body))) { role = 'quote'; body = m[1]; return true; }
+      if ((m = /^--\s*(.*)$/.exec(body))) { role = 'cite'; body = m[1]; return true; }
+      return false;
+    };
+    for (let guard = 0; guard < 3; guard++) if (!takeTime() && !takeMarker()) break;
+    // A "# Title" starts a new scene in an untimed outline. Timed lines never split a scene by themselves:
+    // use a blank line or --- for that, so a heading can sit among timestamped lyrics without cutting them in two.
+    if (role === 'title' && cur?.lines.length && t == null && cur.lines.every((l) => l.tag == null)) flush();
     let lineMod = null;
     const lm = /\s+\{([^}]*)\}\s*$/.exec(body);
     if (lm) { lineMod = parseMods(lm[1]); body = body.slice(0, lm.index); }
@@ -352,8 +371,9 @@ function Ctx(c, packName, fonts) {
   const font = (role) => (HEAD_ROLES.has(role) ? fonts.head : fonts.body);
   const weight = (role) => (HEAD_ROLES.has(role) ? P.headWeight : P.bodyWeight);
   const text = (role, s) => (P.caps && HEAD_ROLES.has(role) ? s.toUpperCase() : s);
-  const w100 = (s, role) => { const f = font(role); const wt = weight(role); const k = `${f}|${wt}|${s}`; let v = m100.get(k); if (v == null) { v = c.measure(s, f, wt, 100); m100.set(k, v); } return v; };
-  return { P, font, weight, text, width: (s, role, px) => (w100(s, role) * px) / 100 };
+  const wt = (role, st) => (st?.b ? Math.max(weight(role), 800) : weight(role));
+  const w100 = (s, role, st) => { const f = font(role); const w = wt(role, st); const k = `${f}|${w}|${st?.i ? 'i' : ''}|${s}`; let v = m100.get(k); if (v == null) { v = c.measure(s, f, w, 100, !!st?.i); m100.set(k, v); } return v; };
+  return { P, font, weight: wt, text, width: (s, role, px, st) => (w100(s, role, st) * px) / 100 };
 }
 
 /** Break words into rows no wider than maxW, minimising uneven row lengths (dynamic programming). */
@@ -384,7 +404,7 @@ function blockAt(cx, lines, S, maxW, align) {
     const px = S * ROLE_SCALE[ln.role] * (ln.mod?.size ?? 1);
     const words = ln.words.map((x) => cx.text(ln.role, x.t));
     const fs = ln.words.map((x) => x.mod?.size ?? 1);
-    const widths = words.map((t, k) => cx.width(t, ln.role, px * fs[k]));
+    const widths = words.map((t, k) => cx.width(t, ln.role, px * fs[k], ln.words[k].st));
     const space = cx.width(' ', ln.role, px) || px * 0.28;
     const brk = balanceRows(widths, space, maxW);
     if (li > 0) y += px * (ln.role === 'bullet' && lines[li - 1].role === 'bullet' ? 0.18 : 0.32);
@@ -419,7 +439,7 @@ function placeBlock(cx, lines, b, box, { align = 'center', anchorY = 'middle', s
     const off = shift ? shift(ri, b.rows.length) : { dx: 0, dy: 0 };
     for (let k = row.a; k < row.b; k++) {
       const w = row.widths[k];
-      runs.push({ text: row.words[k], role: ln.role, li: row.li, wi: k, emph: ln.words[k].emph, size: row.px * (row.fs?.[k] ?? 1), mod: ln.words[k].mod, syl: ln.words[k].syl,
+      runs.push({ text: row.words[k], role: ln.role, li: row.li, wi: k, emph: ln.words[k].emph, size: row.px * (row.fs?.[k] ?? 1), mod: ln.words[k].mod, syl: ln.words[k].syl, st: ln.words[k].st,
         x: x + w / 2 + off.dx, y: y0 + row.y + off.dy, w, rot });
       x += w + row.space;
     }
@@ -744,6 +764,7 @@ export function compileScript(script, ctx) {
       const ord = lineCount.get(li) ?? 0; lineCount.set(li, ord + 1);
       if (!r.syl && !r.deco && sc.lines[li]) { const w = sc.lines[li].words.find((x) => x.syl && x.t.toLowerCase() === String(r.text).toLowerCase()); if (w) r = { ...r, syl: w.syl, mod: r.mod ?? w.mod }; }
       if (!r.mod && !r.deco && sc.lines[li]) { const w = sc.lines[li].words.find((x) => x.mod && x.t.toLowerCase() === String(r.text).toLowerCase()); if (w) r = { ...r, mod: w.mod, size: r.size * (w.mod.size ?? 1) }; }
+      if (!r.st && !r.deco && r.wi >= 0 && sc.lines[li]?.words[r.wi]?.st && String(sc.lines[li].words[r.wi].t).toLowerCase() === String(r.text).toLowerCase()) r = { ...r, st: sc.lines[li].words[r.wi].st };
       const mc = r.mod?.color;
       const c = mc ?? r.color ?? (r.emph && emphStyle === 'color' ? 'accent' : r.role === 'whisper' || r.role === 'cite' ? 'dim' : 'fg');
       const onBar = r.emph && emphStyle === 'bar' && !r.deco && !mc;
@@ -751,7 +772,7 @@ export function compileScript(script, ctx) {
       if (reveal === 'line') rt = lineT[li] + ord * 0.02;
       else if (reveal === 'word') { const nW = sc.lines[li].words.length; const span = Math.max(0.2, lineEnds[li] - lineT[li]); rt = lineT[li] + ord * Math.min(0.9, (span * 0.8) / Math.max(1, nW)); }
       rt += r.mod?.delay ?? 0;
-      const base = { ...r, idx, font: scx.font(r.role), weight: scx.weight(r.role), color: onBar ? 'onAccent' : c,
+      const base = { ...r, idx, font: scx.font(r.role), weight: scx.weight(r.role, r.st), color: onBar ? 'onAccent' : c,
         t0: r.deco ? lineT[0] : rt, anim: { type: r.deco ? 'zoom' : (IN_FOR[r.mod?.motion] ?? inType), spring },
         bar: onBar, phase: rnd(seed, 'ph', i, idx) * 6.283 };
       if (!r.syl || r.deco) return [base];
@@ -912,7 +933,7 @@ function sceneRuns(sc, t, W, H, pulse) {
       const e = spring(t - r.t0 - 0.05, 220, 0.9);
       if (e > 0) bars.push({ x: r.x - r.w / 2 - r.size * 0.12, y: r.y - r.size * 0.42, w: (r.w + r.size * 0.24) * Math.min(1, e), h: r.size * 0.86, rot: r.rot ?? 0, cx: r.x, cy: r.y, c: sc.pal.accent });
     }
-    out.push({ text: r.text, font: r.font, weight: r.weight, size: r.size, color: rgbToHex(dim), x: r.x + st.dx, y: r.y + st.dy, sx: st.sx, sy: st.sy, rot: st.rot, alpha: st.alpha, clip: st.clip });
+    out.push({ text: r.text, font: r.font, weight: r.weight, st: r.st, size: r.size, color: rgbToHex(dim), x: r.x + st.dx, y: r.y + st.dy, sx: st.sx, sy: st.sy, rot: st.rot, alpha: st.alpha, clip: st.clip });
   }
   return { runs: out, bars };
 }

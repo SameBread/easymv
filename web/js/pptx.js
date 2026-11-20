@@ -9,6 +9,7 @@
 
 import { unzipSync } from '../vendor/fflate.js';
 import { fmtT } from './scripttext.js';
+import { paintShape, drawChart, drawTable, drawRich, CHART_PALETTE } from './vector.js';
 
 const td = new TextDecoder();
 const defaultParse = (s) => new DOMParser().parseFromString(s, 'application/xml');
@@ -121,7 +122,8 @@ export function parsePptx(data, { parseXml = defaultParse } = {}) {
     const ln = child(spPr, 'a:ln'); if (!ln) return undefined;
     if (child(ln, 'a:noFill')) return { none: true };
     const c = readColor(child(ln, 'a:solidFill'), theme);
-    return { w: num(ln.getAttribute('w'), 12700), color: c?.hex, alpha: c?.alpha ?? 1, dash: child(ln, 'a:prstDash')?.getAttribute('val') ?? null };
+    const end = (n) => { const t = child(ln, n)?.getAttribute('type'); return t && t !== 'none' ? ({ triangle: 'triangle', arrow: 'arrow', stealth: 'stealth', oval: 'oval', diamond: 'diamond' }[t] ?? 'triangle') : null; };
+    return { w: num(ln.getAttribute('w'), 12700), color: c?.hex, alpha: c?.alpha ?? 1, dash: child(ln, 'a:prstDash')?.getAttribute('val') ?? null, head: end('a:headEnd'), tail: end('a:tailEnd'), cap: ln.getAttribute('cap') === 'rnd' ? 'round' : undefined };
   };
   const parseShadow = (spPr) => {
     const sh = child(child(spPr, 'a:effectLst'), 'a:outerShdw'); if (!sh) return undefined;
@@ -147,6 +149,42 @@ export function parsePptx(data, { parseXml = defaultParse } = {}) {
   };
   const styleColor = (sp, ref) => { const r = child(child(sp, 'p:style'), ref); return r ? readColor(r, theme) : null; };
 
+  const tagText = (t, st) => {
+    const safe = t.replace(/<(\/?[biusBIUS])>/g, '\u2039$1\u203a');
+    if (!safe.trim()) return safe;
+    const lead = /^\s*/.exec(safe)[0]; const trail = /\s*$/.exec(safe)[0]; const core = safe.trim();
+    let o = ''; let c = '';
+    for (const k of ['b', 'i', 'u', 's']) if (st[k]) { o += `<${k}>`; c = `</${k}>${c}`; }
+    return `${lead}${o}${core}${c}${trail}`;
+  };
+  const runStyle = (rPr, defAttr) => {
+    const a = (n) => rPr?.getAttribute(n) ?? defAttr?.(n) ?? null;
+    const u = a('u'); const sk = a('strike');
+    return { b: a('b') === '1', i: a('i') === '1', u: !!u && u !== 'none', s: !!sk && sk !== 'noStrike' };
+  };
+  /** Paragraphs of a text body as plain runs: [{ runs: [{ t, b, i, u, s, color, sz (pt) }], algn }]. Used where text is drawn by the art itself (tables, SmartArt). */
+  const readRichParas = (body, { sz = 18, color = null } = {}) => {
+    const out = [];
+    for (const p of kids(body, 'a:p')) {
+      const runs = [];
+      for (const n of children(p)) {
+        if (n.nodeName === 'a:br') { runs.push({ t: '\n' }); continue; }
+        if (n.nodeName !== 'a:r' && n.nodeName !== 'a:fld') continue;
+        const rPr = child(n, 'a:rPr'); const t = first(n, 'a:t')?.textContent ?? '';
+        if (!t) continue;
+        const c = rPr && readColor(child(rPr, 'a:solidFill'), theme);
+        runs.push({ t, ...runStyle(rPr), color: c?.hex ?? color ?? undefined, sz: num(rPr?.getAttribute('sz')) ? num(rPr.getAttribute('sz')) / 100 : sz });
+      }
+      const pPr = child(p, 'a:pPr');
+      const defSz = num(child(p, 'a:endParaRPr')?.getAttribute('sz')) / 100;
+      if (!runs.some((r) => r.t.trim())) { if (kids(body, 'a:p').length > 1) out.push({ runs: [{ t: ' ', sz: defSz || sz }], algn: 'l' }); continue; }
+      out.push({ runs: runs.map(({ t, ...r }) => ({ t: t === '\n' ? ' ' : t, ...r })), algn: pPr?.getAttribute('algn') ?? 'l', bullet: !!child(pPr, 'a:buChar') });
+    }
+    return out;
+  };
+  const mixHex = (a, b, t) => { const x = hexToRgb(a); const y = hexToRgb(b); return rgbToHex(x.map((v, i) => v * (1 - t) + y[i] * t)); };
+  const themeHex = (name) => { const v = theme.colors[theme.clrMap?.[name] ?? name]; return v ? `#${v}` : null; };
+
   // placeholders of a layout / master, for inherited position and text style
   const phMap = (doc) => {
     const m = [];
@@ -155,6 +193,118 @@ export function parsePptx(data, { parseXml = defaultParse } = {}) {
   };
   const sameKind = { ctrTitle: 'title', subTitle: 'body', obj: 'body' };
   const findPh = (list, type, idx) => list.find((p) => idx != null && p.idx === idx) ?? list.find((p) => p.type === type) ?? list.find((p) => (sameKind[type] ?? type) === (sameKind[p.type] ?? p.type));
+
+
+  const mapBox = (b, T) => ({ ...b, x: T.ox + b.x * T.sx, y: T.oy + b.y * T.sy, w: b.w * T.sx, h: b.h * T.sy });
+  const accentHex = (i) => themeHex(`accent${(i % 6) + 1}`) ?? CHART_PALETTE[i % CHART_PALETTE.length];
+
+  /** a:tbl -> a table spec for vector.js drawTable. Sizes stay in points; `refH` is the frame height in points. */
+  const parseTable = (tbl, box, rmap, T) => {
+    const tblPr = child(tbl, 'a:tblPr'); const styled = !!child(tblPr, 'a:tableStyleId');
+    const firstRow = tblPr?.getAttribute('firstRow') === '1'; const bandRow = tblPr?.getAttribute('bandRow') === '1'; const firstCol = tblPr?.getAttribute('firstCol') === '1';
+    const acc = accentHex(0); const tx1 = themeHex('tx1') ?? '#222222';
+    const colW = kids(tbl, 'a:gridCol').map((c) => num(c.getAttribute('w')));
+    const trs = kids(tbl, 'a:tr'); const rowH = trs.map((r) => num(r.getAttribute('h')));
+    const side = (tcPr, nm) => { const ln = child(tcPr, nm); if (!ln) return undefined; if (child(ln, 'a:noFill')) return { none: true }; const c = readColor(child(ln, 'a:solidFill'), theme); return c ? { wpt: num(ln.getAttribute('w'), 12700) / 12700, color: c.hex } : undefined; };
+    const data = trs.map((tr, r) => kids(tr, 'a:tc').filter((tc) => tc.parentNode === tr).map((tc) => {
+      if (tc.getAttribute('hMerge') === '1' || tc.getAttribute('vMerge') === '1') return { merged: true };
+      const tcPr = child(tc, 'a:tcPr'); let fill = parseFill(tcPr, rmap);
+      const head = styled && firstRow && r === 0;
+      if (fill === undefined && styled) fill = head ? { type: 'solid', hex: acc } : { type: 'solid', hex: mixHex('#ffffff', acc, bandRow && r % 2 === 1 ? 0.4 : 0.2) };
+      const dcolor = head ? '#ffffff' : tx1;
+      const paras = readRichParas(child(tc, 'a:txBody') ?? tc, { sz: 18, color: dcolor });
+      const bl = { l: side(tcPr, 'a:lnL'), r: side(tcPr, 'a:lnR'), t: side(tcPr, 'a:lnT'), b: side(tcPr, 'a:lnB') };
+      const borders = Object.fromEntries(Object.entries(bl).filter(([, v]) => v));
+      const al = child(tc, 'a:txBody') && child(child(child(tc, 'a:txBody'), 'a:p'), 'a:pPr')?.getAttribute('algn');
+      return { paras: paras.length ? paras.map((p) => ({ ...p, runs: p.runs.map((x) => ({ ...x, b: x.b || head || (styled && firstCol && false) })) })) : [{ runs: [{ t: ' ', sz: 18 }] }], fill: fill?.type === 'none' ? { type: 'none' } : fill ?? null, color: dcolor,
+        span: [num(tc.getAttribute('gridSpan'), 1), num(tc.getAttribute('rowSpan'), 1)], anchor: { t: 'top', ctr: 'middle', b: 'bottom' }[tcPr?.getAttribute('anchor') ?? 't'] ?? 'top', align: al ?? 'l', borders: Object.keys(borders).length ? borders : undefined };
+    }));
+    return { data, header: false, banded: false, colW: colW.length ? colW : undefined, rowH: rowH.some((v) => v > 0) ? rowH : undefined, refH: Math.max(1, box.h / 12700),
+      border: styled ? '#ffffff' : '#9a9a9a', borderW: 0, pad: 0.7, fg: tx1, bg: '', valign: 'top', unitBorder: true };
+  };
+
+  const txt = (el) => (el ? kids(el, 'a:t').map((t) => t.textContent).join('') : '');
+  const ptsOf = (node) => {
+    if (!node) return [];
+    const cache = first(node, 'c:strCache') ?? first(node, 'c:numCache') ?? first(node, 'c:strLit') ?? first(node, 'c:numLit') ?? node;
+    const n = num(first(cache, 'c:ptCount')?.getAttribute('val'));
+    const out = new Array(n).fill('');
+    for (const pt of kids(cache, 'c:pt')) out[num(pt.getAttribute('idx'))] = first(pt, 'c:v')?.textContent ?? '';
+    return out;
+  };
+  /** A chart part -> chart spec for vector.js drawChart. */
+  const parseChart = (doc) => {
+    const chart = first(doc, 'c:chart'); const plot = first(chart, 'c:plotArea'); if (!plot) return null;
+    const groups = children(plot).filter((n) => /^c:(bar|bar3D|line|line3D|area|area3D|pie|pie3D|ofPie|doughnut|scatter|bubble|radar|stock|surface)Chart$/.test(n.nodeName));
+    if (!groups.length) return null;
+    const g0 = groups[0]; const kind = g0.nodeName.replace(/^c:|Chart$/g, '').replace('3D', '');
+    const dir = first(g0, 'c:barDir')?.getAttribute('val');
+    const type = { bar: dir === 'bar' ? 'bar' : 'column', line: 'line', area: 'area', pie: 'pie', ofPie: 'pie', doughnut: 'doughnut', scatter: 'scatter', bubble: 'scatter', radar: 'line', stock: 'line', surface: 'area' }[kind] ?? 'column';
+    const gv = child(g0, 'c:grouping')?.getAttribute('val');
+    const grouping = gv === 'stacked' ? 'stacked' : gv === 'percentStacked' ? 'percent' : 'clustered';
+    const sers = groups.flatMap((g) => kids(g, 'c:ser'));
+    const pieLike = type === 'pie' || type === 'doughnut';
+    let categories = [];
+    const series = sers.map((ser, i) => {
+      const catNode = first(ser, 'c:cat') ?? first(ser, 'c:xVal');
+      const cats = ptsOf(catNode); if (cats.length > categories.length) categories = cats;
+      const vals = ptsOf(first(ser, 'c:val') ?? first(ser, 'c:yVal')).map((v) => Number(v) || 0);
+      const fill = parseFill(child(ser, 'c:spPr'), new Map()); const lineFill = readColor(child(child(ser, 'c:spPr'), 'a:ln') && child(child(child(ser, 'c:spPr'), 'a:ln'), 'a:solidFill'), theme);
+      const o = { name: first(child(ser, 'c:tx'), 'c:v')?.textContent?.trim() || `Series ${i + 1}`, values: vals, color: (type === 'line' ? lineFill?.hex : fill?.hex) ?? fill?.hex ?? lineFill?.hex ?? accentHex(i) };
+      if (type === 'scatter') o.xs = ptsOf(first(ser, 'c:xVal')).map((v, k) => (Number.isFinite(Number(v)) && v !== '' ? Number(v) : k + 1));
+      if (pieLike) { o.ptColors = []; for (const dp of kids(ser, 'c:dPt')) { const f = parseFill(child(dp, 'c:spPr'), new Map()); if (f?.hex) o.ptColors[num(dp.getAttribute('idx'))] = f.hex; } for (let k = 0; k < vals.length; k++) o.ptColors[k] ??= accentHex(k); }
+      return o;
+    });
+    if (!series.length) return null;
+    if (type === 'scatter') categories = series[0].xs.map(String);
+    const del = first(chart, 'c:autoTitleDeleted')?.getAttribute('val') === '1';
+    let title = txt(child(chart, 'c:title')).trim();
+    if (!title && !del && series.length === 1 && !child(chart, 'c:title')) title = '';
+    const legendEl = child(chart, 'c:legend'); const lp = child(legendEl, 'c:legendPos')?.getAttribute('val') ?? 'r';
+    const dl = first(g0, 'c:dLbls'); const labels = !!dl && (first(dl, 'c:showVal')?.getAttribute('val') === '1' || first(dl, 'c:showPercent')?.getAttribute('val') === '1');
+    const mk = (ser) => child(child(ser, 'c:marker'), 'c:symbol')?.getAttribute('val') !== 'none';
+    return { type, grouping, title, categories, series, legend: legendEl ? ({ b: 'bottom', r: 'right', t: 'top', l: 'left', tr: 'right' }[lp] ?? 'bottom') : 'none', labels, grid: !!first(plot, 'c:majorGridlines'),
+      smooth: sers.some((x) => first(x, 'c:smooth')?.getAttribute('val') === '1'), markers: sers.every(mk), hole: num(first(g0, 'c:holeSize')?.getAttribute('val'), 55) / 100,
+      fg: themeHex('tx1') ? mixHex(themeHex('tx1'), themeHex('bg1') ?? '#ffffff', 0.25) : '#444444', bg: '', size: 1, font: 'Inter', palette: [0, 1, 2, 3, 4, 5].map(accentHex) };
+  };
+
+  /** SmartArt: use the pre-computed drawing part (dsp:) when the file has one, else lay the node texts out as a row of boxes. */
+  const parseSmartArt = (dgm, frame, rmap, T) => {
+    const out = [];
+    const dmPath = rmap.get(dgm.getAttribute('r:dm')); const dm = dmPath && xml(dmPath);
+    const ext = dm && first(dm, 'dsp:dataModelExt'); const dp = ext && rmap.get(ext.getAttribute('relId')); const dd = dp && xml(dp);
+    const mk = (local, geom, fill, line, paras, trect, anchor) => {
+      const abs = { ...local, x: frame.x + local.x, y: frame.y + local.y };
+      const box = mapBox(abs, T);
+      const text = paras?.length ? { paras, rect: trect ? { x: (frame.x + trect.x - abs.x) * T.sx, y: (frame.y + trect.y - abs.y) * T.sy, w: trect.w * T.sx, h: trect.h * T.sy } : null, anchor: anchor ?? 'middle' } : null;
+      out.push({ kind: 'shape', geom, xf: box, fill, line, shadow: null, text });
+    };
+    if (dd) {
+      for (const sp of kids(dd, 'dsp:sp')) {
+        const spPr = child(sp, 'dsp:spPr'); const xf = parseXfrm(spPr); if (!xf) continue;
+        const geom = parseGeom(spPr) ?? { prst: 'rect', adj: {} };
+        const st = child(sp, 'dsp:style');
+        let fill = parseFill(spPr, rmap); let line = parseLine(spPr);
+        if (fill === undefined) { const c = readColor(child(st, 'a:fillRef'), theme); fill = c ? { type: 'solid', ...c } : null; }
+        if (line === undefined) { const c = readColor(child(st, 'a:lnRef'), theme); line = c && num(child(st, 'a:lnRef')?.getAttribute('idx')) > 0 ? { w: 12700, color: c.hex, alpha: c.alpha } : null; }
+        const fc = readColor(child(st, 'a:fontRef'), theme);
+        const tb = child(sp, 'dsp:txBody'); const paras = tb ? readRichParas(tb, { sz: 18, color: fc?.hex ?? '#ffffff' }) : [];
+        const txf = child(sp, 'dsp:txXfrm'); const o = child(txf, 'a:off'); const e = child(txf, 'a:ext');
+        const trect = o && e ? { x: num(o.getAttribute('x')), y: num(o.getAttribute('y')), w: num(e.getAttribute('cx')), h: num(e.getAttribute('cy')) } : null;
+        mk(xf, geom, fill ?? null, line ?? null, paras, trect, { t: 'top', ctr: 'middle', b: 'bottom' }[child(tb, 'a:bodyPr')?.getAttribute('anchor') ?? 'ctr'] ?? 'middle');
+      }
+    } else if (dm) {
+      const nodes = kids(dm, 'dgm:pt').filter((p) => (p.getAttribute('type') ?? 'node') === 'node').map((p) => txt(first(p, 'dgm:t'))).filter((t) => t.trim());
+      const n = nodes.length; const wide = frame.w >= frame.h; const gap = Math.min(frame.w, frame.h) * 0.06;
+      nodes.forEach((t, i) => {
+        const bw = wide ? (frame.w - gap * (n - 1)) / n : frame.w; const bh = wide ? frame.h : (frame.h - gap * (n - 1)) / n;
+        const local = { x: wide ? i * (bw + gap) : 0, y: wide ? 0 : i * (bh + gap), w: bw, h: bh, rot: 0, fh: false, fv: false };
+        const sz = Math.max(8, Math.min(24, (Math.min(bw, bh) / 12700) * 0.26));
+        mk(local, { prst: 'roundRect', adj: {} }, { type: 'solid', hex: accentHex(i), alpha: 1 }, null, [{ runs: [{ t, sz, color: '#ffffff', b: false }], algn: 'ctr' }], null, 'middle');
+      });
+    }
+    return out;
+  };
 
   const slides = slidePaths.map((sp) => {
     const doc = xml(sp); const r = rels(sp);
@@ -197,9 +347,9 @@ export function parsePptx(data, { parseXml = defaultParse } = {}) {
         const all = runs.map((x) => x.t).join('').replace(/\s+/g, ' ').trim();
         if (!all) continue;
         const pPr = child(p, 'a:pPr');
-        const bold = (x) => x.rPr?.getAttribute('b') === '1';
-        const whole = runs.every((x) => bold(x) || !x.t.trim());
-        const text = whole ? all : runs.map((x) => (bold(x) && x.t.trim() ? `**${x.t.trim()}** ` : x.t)).join('').replace(/\s+/g, ' ').replace(/\*\* \*\*/g, ' ').trim();
+        const dAttr = (a) => lookup(chain, lvl, (n) => child(n, 'a:defRPr')?.getAttribute(a));
+        let text = runs.map((x) => tagText(x.t.replace(/\s+/g, ' '), runStyle(x.rPr, dAttr))).join('').replace(/\s+/g, ' ').trim();
+        for (const k of ['b', 'i', 'u', 's']) text = text.replace(new RegExp(`</${k}>(\\s*)<${k}>`, 'g'), '$1');
         const r0 = runs.find((x) => x.t.trim())?.rPr;
         const szv = num(r0?.getAttribute('sz')) || lookup(chain, lvl, (n) => (child(n, 'a:defRPr')?.getAttribute('sz') ? num(child(n, 'a:defRPr').getAttribute('sz')) : null)) || (ctx.kind === 'title' ? 4400 : 1800);
         const col = (r0 && readColor(child(r0, 'a:solidFill'), theme)) ?? lookup(chain, lvl, (n) => { const f = child(child(n, 'a:defRPr'), 'a:solidFill'); return f ? readColor(f, theme) : null; });
@@ -211,7 +361,6 @@ export function parsePptx(data, { parseXml = defaultParse } = {}) {
 
     // walk a shape tree; `T` maps child coordinates to slide coordinates (group transforms)
     const IDT = { sx: 1, sy: 1, ox: 0, oy: 0 };
-    const mapBox = (b, T) => ({ ...b, x: T.ox + b.x * T.sx, y: T.oy + b.y * T.sy, w: b.w * T.sx, h: b.h * T.sy });
     const walk = (tree, rmap, T, own) => {
       for (const n of children(tree)) {
         const name = n.nodeName;
@@ -251,23 +400,16 @@ export function parsePptx(data, { parseXml = defaultParse } = {}) {
           const sr = first(n, 'a:srcRect');
           push({ kind: 'pic', path: useMedia(p), xf: mapBox(xf, T), crop: sr ? { l: num(sr.getAttribute('l')) / 100000, t: num(sr.getAttribute('t')) / 100000, r: num(sr.getAttribute('r')) / 100000, b: num(sr.getAttribute('b')) / 100000 } : null, alpha: num(first(blip, 'a:alphaModFix')?.getAttribute('amt'), 100000) / 100000, shadow: parseShadow(child(n, 'p:spPr')) ?? null });
         } else if (name === 'p:graphicFrame') {
-          const tbl = first(n, 'a:tbl'); const xf = parseXfrm(n);
-          if (tbl && xf) {
-            const box = mapBox(xf, T); const cols = kids(tbl, 'a:gridCol').map((c) => num(c.getAttribute('w'))); const totW = cols.reduce((a, b) => a + b, 0) || 1;
-            let y = box.y;
-            for (const row of kids(tbl, 'a:tr')) {
-              const rh = num(row.getAttribute('h')) * T.sy; let x = box.x; let ci = 0;
-              for (const cell of kids(row, 'a:tc')) {
-                const cw = ((cols[ci] ?? totW / Math.max(1, cols.length)) / totW) * box.w; const cb = { x, y, w: cw, h: rh };
-                const tcPr = child(cell, 'a:tcPr'); const fill = parseFill(tcPr, rmap);
-                if (fill && fill.type !== 'none') push({ kind: 'shape', geom: { prst: 'rect', adj: {} }, xf: cb, fill, line: null, shadow: null });
-                push({ kind: 'shape', geom: { prst: 'rect', adj: {} }, xf: cb, fill: null, line: { w: 6350, color: '#9a9a9a', alpha: 0.7, dash: null }, shadow: null });
-                if (own) { const tb = readText(cell, { box: cb, kind: 'other', ph: null }); if (tb) blocks.push(tb); }
-                x += cw; ci += child(cell, 'a:tc') ? 1 : 1;
-              }
-              y += rh;
-            }
-          } else if (xf && own) { const blip = first(n, 'a:blip'); const p = blip && rmap.get(blip.getAttribute('r:embed')); if (p && files[p]) push({ kind: 'pic', path: useMedia(p), xf: mapBox(xf, T), crop: null, alpha: 1, shadow: null }); }
+          const xf = parseXfrm(n); if (!xf) continue;
+          const box = mapBox(xf, T);
+          const tbl = first(n, 'a:tbl'); const chartRef = first(n, 'c:chart'); const dgm = first(n, 'dgm:relIds');
+          if (tbl) push({ kind: 'table', xf: box, spec: parseTable(tbl, box, rmap, T) });
+          else if (chartRef) {
+            const cp = rmap.get(chartRef.getAttribute('r:id')); const cd = cp && xml(cp);
+            const spec = cd && parseChart(cd);
+            if (spec) push({ kind: 'chart', xf: box, spec });
+          } else if (dgm) { for (const it of parseSmartArt(dgm, xf, rmap, T)) push(it); }
+          else if (own) { const blip = first(n, 'a:blip'); const p = blip && rmap.get(blip.getAttribute('r:embed')); if (p && files[p]) push({ kind: 'pic', path: useMedia(p), xf: box, crop: null, alpha: 1, shadow: null }); }
         }
       }
     };
@@ -293,62 +435,12 @@ export function parsePptx(data, { parseXml = defaultParse } = {}) {
 // ---------- artwork renderer (canvas) ----------
 
 const EMU_PT = 12700;
-function shapePath(g, w, h) {
-  const p = new Path2D(); const a = g.adj ?? {};
-  const pr = g.prst;
-  const adj = (k, d) => (a[k] != null ? a[k] : d) / 100000;
-  const poly = (pts) => { pts.forEach(([x, y], i) => (i ? p.lineTo(x, y) : p.moveTo(x, y))); p.closePath(); };
-  switch (pr) {
-    case 'ellipse': p.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, Math.PI * 2); break;
-    case 'roundRect': { const r = Math.min(w, h) * adj('adj', 16667); p.roundRect(0, 0, w, h, r); break; }
-    case 'round2SameRect': { const r = Math.min(w, h) * adj('adj1', 16667); p.roundRect(0, 0, w, h, [r, r, 0, 0]); break; }
-    case 'triangle': poly([[w * adj('adj', 50000), 0], [w, h], [0, h]]); break;
-    case 'rtTriangle': poly([[0, 0], [w, h], [0, h]]); break;
-    case 'diamond': poly([[w / 2, 0], [w, h / 2], [w / 2, h], [0, h / 2]]); break;
-    case 'parallelogram': { const o = Math.min(w, h) * adj('adj', 25000); poly([[o, 0], [w, 0], [w - o, h], [0, h]]); break; }
-    case 'trapezoid': { const o = Math.min(w, h) * adj('adj', 25000); poly([[o, 0], [w - o, 0], [w, h], [0, h]]); break; }
-    case 'hexagon': { const o = w * 0.25; poly([[o, 0], [w - o, 0], [w, h / 2], [w - o, h], [o, h], [0, h / 2]]); break; }
-    case 'octagon': { const o = Math.min(w, h) * 0.29; poly([[o, 0], [w - o, 0], [w, o], [w, h - o], [w - o, h], [o, h], [0, h - o], [0, o]]); break; }
-    case 'pentagon': case 'homePlate': { const o = Math.min(w, h) * adj('adj', 50000); poly([[0, 0], [w - o, 0], [w, h / 2], [w - o, h], [0, h]]); break; }
-    case 'chevron': { const o = Math.min(w, h) * adj('adj', 50000); poly([[0, 0], [w - o, 0], [w, h / 2], [w - o, h], [0, h], [o, h / 2]]); break; }
-    case 'rightArrow': { const hh = h * adj('adj1', 50000) / 2; const hd = Math.min(w, h) * adj('adj2', 50000); poly([[0, h / 2 - hh], [w - hd, h / 2 - hh], [w - hd, 0], [w, h / 2], [w - hd, h], [w - hd, h / 2 + hh], [0, h / 2 + hh]]); break; }
-    case 'leftArrow': { const hh = h * adj('adj1', 50000) / 2; const hd = Math.min(w, h) * adj('adj2', 50000); poly([[w, h / 2 - hh], [hd, h / 2 - hh], [hd, 0], [0, h / 2], [hd, h], [hd, h / 2 + hh], [w, h / 2 + hh]]); break; }
-    case 'upArrow': { const ww = w * adj('adj1', 50000) / 2; const hd = Math.min(w, h) * adj('adj2', 50000); poly([[w / 2 - ww, h], [w / 2 - ww, hd], [0, hd], [w / 2, 0], [w, hd], [w / 2 + ww, hd], [w / 2 + ww, h]]); break; }
-    case 'downArrow': { const ww = w * adj('adj1', 50000) / 2; const hd = Math.min(w, h) * adj('adj2', 50000); poly([[w / 2 - ww, 0], [w / 2 - ww, h - hd], [0, h - hd], [w / 2, h], [w, h - hd], [w / 2 + ww, h - hd], [w / 2 + ww, 0]]); break; }
-    case 'plus': case 'mathPlus': { const o = Math.min(w, h) * adj('adj', 25000); poly([[o, 0], [w - o, 0], [w - o, o], [w, o], [w, h - o], [w - o, h - o], [w - o, h], [o, h], [o, h - o], [0, h - o], [0, o], [o, o]]); break; }
-    case 'star5': { const cx = w / 2; const cy = h / 2; const pts = []; for (let i = 0; i < 10; i++) { const r = i % 2 ? 0.382 : 1; const an = -Math.PI / 2 + (i * Math.PI) / 5; pts.push([cx + Math.cos(an) * r * w / 2, cy + Math.sin(an) * r * h / 2]); } poly(pts); break; }
-    case 'donut': { const t = Math.min(w, h) * adj('adj', 25000); p.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, Math.PI * 2); p.ellipse(w / 2, h / 2, Math.max(1, w / 2 - t), Math.max(1, h / 2 - t), 0, 0, Math.PI * 2, true); break; }
-    case 'line': case 'straightConnector1': p.moveTo(0, 0); p.lineTo(w, h); break;
-    default: p.rect(0, 0, w, h);   // callouts, flow-chart boxes and anything unknown fall back to a box
-  }
-  return p;
-}
-function custPath(paths, w, h) {
-  const p = new Path2D();
-  for (const pa of paths) {
-    const sx = pa.w ? w / pa.w : 1; const sy = pa.h ? h / pa.h : 1; let cur = [0, 0];
-    for (const c of pa.cmds) {
-      const q = c.pts.map(([x, y]) => [x * sx, y * sy]);
-      if (c.t === 'moveTo' && q[0]) { p.moveTo(...q[0]); cur = q[0]; }
-      else if (c.t === 'lnTo' && q[0]) { p.lineTo(...q[0]); cur = q[0]; }
-      else if (c.t === 'cubicBezTo' && q.length >= 3) { p.bezierCurveTo(...q[0], ...q[1], ...q[2]); cur = q[2]; }
-      else if (c.t === 'quadBezTo' && q.length >= 2) { p.quadraticCurveTo(...q[0], ...q[1]); cur = q[1]; }
-      else if (c.t === 'arcTo' && c.arc) {
-        const { wR, hR, st, sw } = c.arc; const rx = wR * sx; const ry = hR * sy; const a0 = (st * Math.PI) / 180; const a1 = a0 + (sw * Math.PI) / 180;
-        const cx = cur[0] - rx * Math.cos(a0); const cy = cur[1] - ry * Math.sin(a0);
-        p.ellipse(cx, cy, rx, ry, 0, a0, a1, sw < 0); cur = [cx + rx * Math.cos(a1), cy + ry * Math.sin(a1)];
-      } else if (c.t === 'close') p.closePath();
-    }
-  }
-  return p;
-}
-
 /**
  * Paint a slide's artwork (no text) onto a canvas of W x H. The slide is scaled to fit and centred; the slide background
  * fills the whole canvas, so a slide with a different aspect ratio than the video gets bars in its own background colour.
  * Returns { canvas, tf: { s, ox, oy } } where tf maps slide EMU to canvas pixels.
  */
-export async function renderSlideArt(parsed, slide, W, H, { decode } = {}) {
+export async function renderSlideArt(parsed, slide, W, H, { decode, skip = new Set() } = {}) {
   const dec = decode ?? (async (bytes) => createImageBitmap(new Blob([bytes])));
   const canvas = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(W, H) : Object.assign(document.createElement('canvas'), { width: W, height: H });
   const g = canvas.getContext('2d');
@@ -371,7 +463,9 @@ export async function renderSlideArt(parsed, slide, W, H, { decode } = {}) {
   if (bg.type === 'blip') { const im = await img(bg.path); if (im) { const k = Math.max(W / im.width, H / im.height); g.drawImage(im, (W - im.width * k) / 2, (H - im.height * k) / 2, im.width * k, im.height * k); } else { g.fillStyle = '#222'; g.fillRect(0, 0, W, H); } }
   else { const st = await fillStyle(bg, W, H); g.fillStyle = st ?? '#ffffff'; g.fillRect(0, 0, W, H); }
 
+  const rich = (paras, defColor) => paras.map((p) => ({ align: p.algn, bullet: p.bullet, runs: p.runs.map((r) => ({ ...r, size: (r.sz ?? 18) * EMU_PT * s, color: r.color ?? defColor })) }));
   for (const it of slide.items) {
+    if (skip.has(it.kind)) continue;
     const b = it.xf; const x = ox + b.x * s; const y = oy + b.y * s; const w = b.w * s; const h = b.h * s;
     if (w <= 0 && h <= 0) continue;
     g.save();
@@ -379,27 +473,28 @@ export async function renderSlideArt(parsed, slide, W, H, { decode } = {}) {
     if (b.rot) g.rotate((b.rot * Math.PI) / 180);
     g.scale(b.fh ? -1 : 1, b.fv ? -1 : 1);
     g.translate(-w / 2, -h / 2);
-    if (it.shadow) { g.shadowColor = it.shadow.color; g.shadowBlur = (it.shadow.blur * s) || 4; const a = (it.shadow.dir * Math.PI) / 180; g.shadowOffsetX = Math.cos(a) * it.shadow.dist * s; g.shadowOffsetY = Math.sin(a) * it.shadow.dist * s; g.globalAlpha = 1; }
+    const sh = it.shadow ? (() => { const a = (it.shadow.dir * Math.PI) / 180; return { color: it.shadow.color, blur: (it.shadow.blur * s) || 4, dx: Math.cos(a) * it.shadow.dist * s, dy: Math.sin(a) * it.shadow.dist * s }; })() : null;
     if (it.kind === 'pic') {
       const im = await img(it.path);
       if (im) {
         const c = it.crop ?? { l: 0, t: 0, r: 0, b: 0 };
+        if (sh) { g.shadowColor = sh.color; g.shadowBlur = sh.blur; g.shadowOffsetX = sh.dx; g.shadowOffsetY = sh.dy; }
         g.globalAlpha = it.alpha ?? 1;
         g.drawImage(im, c.l * im.width, c.t * im.height, Math.max(1, im.width * (1 - c.l - c.r)), Math.max(1, im.height * (1 - c.t - c.b)), 0, 0, w, h);
       }
+    } else if (it.kind === 'chart') {
+      drawChart(g, it.spec, w, h, 1);
+    } else if (it.kind === 'table') {
+      drawTable(g, it.spec, w, h, 1);
     } else {
-      const path = it.geom.cust ? custPath(it.geom.cust, w, h) : shapePath(it.geom, w, h);
-      if (it.fill && it.fill.type !== 'none') {
-        g.globalAlpha = it.fill.alpha ?? 1;
-        if (it.fill.type === 'blip') { const im = await img(it.fill.path); if (im) { g.save(); g.clip(path); g.globalAlpha = it.fill.alpha; const k = Math.max(w / im.width, h / im.height); g.drawImage(im, (w - im.width * k) / 2, (h - im.height * k) / 2, im.width * k, im.height * k); g.restore(); } }
-        else { g.fillStyle = (await fillStyle(it.fill, w, h)) ?? '#808080'; g.fill(path, 'evenodd'); }
+      const fill = it.fill?.type === 'blip' ? { ...it.fill } : it.fill;
+      const blip = fill?.type === 'blip' ? await img(fill.path) : null;
+      const line = it.line && !it.line.none && it.line.color ? { ...it.line, w: Math.max(1, (it.line.w ?? 12700) * s) } : it.line?.none ? { none: true } : null;
+      paintShape(g, { geom: it.geom, fill, line: line ?? (it.geom.prst === 'line' ? { w: Math.max(1, s * 12700), color: '#888888' } : null), shadow: sh }, w, h, { blip });
+      if (it.text?.paras?.length) {
+        const r = it.text.rect ?? { x: 0, y: 0, w: b.w, h: b.h };
+        drawRich(g, rich(it.text.paras, '#ffffff'), { x: r.x * s + w * 0.03, y: r.y * s, w: r.w * s - w * 0.06, h: r.h * s }, { anchor: it.text.anchor ?? 'middle' });
       }
-      g.shadowColor = 'transparent';
-      if (it.line && !it.line.none && it.line.color) {
-        g.globalAlpha = it.line.alpha ?? 1; g.strokeStyle = it.line.color; g.lineWidth = Math.max(1, (it.line.w ?? 12700) * s);
-        if (it.line.dash && it.line.dash !== 'solid') g.setLineDash(it.line.dash.includes('dot') || it.line.dash === 'sysDash' ? [g.lineWidth, g.lineWidth * 1.5] : [g.lineWidth * 4, g.lineWidth * 2]);
-        g.stroke(path);
-      } else if (it.geom.prst === 'line') { g.strokeStyle = '#888'; g.lineWidth = Math.max(1, s * 12700); g.stroke(path); }
     }
     g.restore();
   }
@@ -408,7 +503,8 @@ export async function renderSlideArt(parsed, slide, W, H, { decode } = {}) {
 
 // ---------- planning: timing, pagination, script ----------
 
-const words = (s) => (s.match(/\S+/g) ?? []).length;
+const plainT = (t) => String(t).replace(/<\/?[biusBIUS]>/g, '');
+const words = (s) => (plainT(s).match(/\S+/g) ?? []).length;
 const MIN_TEXT = 0.034;      // smallest comfortable text height, as a share of the video height
 const MAX_PAGE_SEC = 24;
 
@@ -430,7 +526,7 @@ export function planSlides(parsed, { W = 1280, H = 720, perSlide = 0, fitTo = 0,
       let px = { x: tf.ox + b.box.x * tf.s, y: tf.oy + b.box.y * tf.s, w: b.box.w * tf.s, h: b.box.h * tf.s };
       const maxSz = Math.max(...b.paras.map((p) => p.sz));
       const tpx = Math.max(maxSz * EMU_PT * tf.s * 0.98, MIN_TEXT * H);
-      const chars = b.paras.reduce((a, p) => a + p.text.length, 0);
+      const chars = b.paras.reduce((a, p) => a + plainT(p.text).length, 0);
       // a box too small for even one comfortable line is grown around its centre
       const minH = tpx * 1.5; const minW = Math.min(W * 0.6, Math.max(W * 0.18, Math.min(chars, 24) * tpx * 0.5));
       if (px.h < minH) { px.y -= (minH - px.h) / 2; px.h = minH; }
@@ -439,7 +535,7 @@ export function planSlides(parsed, { W = 1280, H = 720, perSlide = 0, fitTo = 0,
       const capLines = Math.max(1, Math.floor(px.h / (tpx * 1.3))); const perLine = Math.max(4, Math.floor(px.w / (tpx * 0.5)));
       const pages = []; let cur = []; let used = 0;
       for (const p of b.paras) {
-        const need = Math.max(1, Math.ceil(p.text.length / (perLine * 0.9)));   // wrapped lines this paragraph takes
+        const need = Math.max(1, Math.ceil(plainT(p.text).length / (perLine * 0.9)));   // wrapped lines this paragraph takes
         if (cur.length && used + need > capLines) { pages.push(cur); cur = []; used = 0; }
         cur.push(p); used += need;
       }

@@ -14,6 +14,7 @@ import { fxSettings, FX_KINDS, hexToRgb as fxRgb, PARTICLE_VERT, PARTICLE_FRAG, 
 import { lyricsSettings, activeLines, lineEnd, highlightFraction, placeLine } from './lyrics.js';
 import { ensureFont, measureLine, drawLine } from './textcanvas.js';
 import { compileFor, scriptFonts } from './script.js';
+import { renderVector, vectorSettings, vectorKey } from './vectorlayer.js';
 import { frameAt } from './kinetic.js';
 import { familyCss, nearestWeight, migrateFont, loadBundled, isBundled } from './fonts.js';
 
@@ -286,6 +287,7 @@ export class Renderer {
     const pinned = new Set();
     for (const it of plan) if (it.kind === 'lyrics') await this._prepareLyrics(it);
     for (const it of plan) if (it.kind === 'script') await this._prepareScript(it);
+    for (const it of plan) if (it.kind === 'vector') await this._prepareVector(it);
     plan = plan.filter((it) => it.kind === 'image');
     for (const it of plan) {
       pinned.add(Renderer.key(it.asset, it.asset.textureIndex(it.frameA)));
@@ -359,6 +361,7 @@ export class Renderer {
       case 'effect': this._drawEffect(it); break;
       case 'lyrics': this._drawLyrics(it); break;
       case 'script': this._drawScript(it); break;
+      case 'vector': this._drawVector(it); break;
       default: this._drawElement(it, 1);
     }
     this.gl.bindVertexArray(this.vao);
@@ -567,11 +570,12 @@ export class Renderer {
     for (const pass of f.passes) for (const r of pass.runs) {
       const px = Math.max(8, Math.round(r.size));
       const sh = r.shadow ? Math.round(r.shadow * 10) / 10 : 0;
-      r.key = `scr|${r.text}|${r.font}|${r.weight}|${r.color}|${px}|${sh}`;
+      const sk = r.st ? `${r.st.i ? 'i' : ''}${r.st.u ? 'u' : ''}${r.st.s ? 's' : ''}` : '';
+      r.key = `scr|${r.text}|${r.font}|${r.weight}|${r.color}|${px}|${sh}|${sk}`;
       if (this.textTex.has(r.key)) { const e = this.textTex.get(r.key); this.textTex.delete(r.key); this.textTex.set(r.key, e); continue; }
       const font = migrateFont(r.font);
       const g = document.createElement('canvas').getContext('2d');
-      const css = `${nearestWeight(font, r.weight)} ${px}px ${familyCss(font)}`;
+      const css = `${r.st?.i ? 'italic ' : ''}${nearestWeight(font, r.weight)} ${px}px ${familyCss(font)}`;
       g.font = css;
       const pad = Math.ceil(px * (0.2 + 0.35 * sh));
       const w = Math.ceil(g.measureText(r.text).width + pad * 2); const h = Math.ceil(px * 1.3 + pad * 2);
@@ -580,6 +584,12 @@ export class Renderer {
       if (sh > 0) { k.shadowColor = 'rgba(0,0,0,0.75)'; k.shadowBlur = px * 0.22 * sh + 1; k.shadowOffsetY = px * 0.05 * sh; }
       k.fillText(r.text, w / 2, h / 2 + px * 0.04);
       if (sh > 0.3) k.fillText(r.text, w / 2, h / 2 + px * 0.04);
+      if (r.st?.u || r.st?.s) {   // underline / strike-through, drawn as rules so they match the glyph colour and weight
+        const tw = g.measureText(r.text).width; const th = Math.max(1, px * 0.06);
+        k.shadowColor = 'transparent';
+        if (r.st.u) k.fillRect(w / 2 - tw / 2, h / 2 + px * 0.36, tw, th);
+        if (r.st.s) k.fillRect(w / 2 - tw / 2, h / 2 - th / 2 + px * 0.04, tw, th);
+      }
       this._uploadText(r.key, cv);
     }
     it.scr = f;
@@ -631,6 +641,33 @@ export class Renderer {
         gl.disable(gl.SCISSOR_TEST);
       } else run();
     }
+  }
+
+  // ---------- shape / chart / table layers ----------
+
+  async _prepareVector(it) {
+    const def = it.asset.def;
+    const st = vectorSettings(def);
+    if (document.fonts) { const f = migrateFont(st.font || 'Inter'); if (isBundled(f)) await loadBundled(f).catch(() => {}); for (const w of [400, 700]) await document.fonts.load(`${nearestWeight(f, w)} 24px ${familyCss(f)}`, 'Aa').catch(() => []); }
+    const step = def.type === 'shape' ? 20 : 40;
+    const prog = Math.round(Math.max(0, Math.min(1, it.props[P.intensity])) * step) / step;
+    const key = vectorKey(def, this.width, this.height, prog);
+    if (!this.textTex.has(key)) {
+      if (prog <= 0) { it.vec = null; return; }
+      const r = renderVector(def, this.width, this.height, prog);
+      this._uploadText(key, r.canvas);
+      this.textTex.get(key).pad = r.pad;
+    } else { const e = this.textTex.get(key); this.textTex.delete(key); this.textTex.set(key, e); }
+    it.vec = key;
+  }
+
+  _drawVector(it) {
+    const e = it.vec && this.textTex.get(it.vec); if (!e) return;
+    const { props } = it;
+    const W = this.width; const H = this.height;
+    const cx = props[P.positionX] * W; const cy = props[P.positionY] * H;
+    const sx = props[P.scale] * props[P.scaleX] * (props[P.mirrorX] >= 0.5 ? -1 : 1); const sy = props[P.scale] * props[P.scaleY] * (props[P.mirrorY] >= 0.5 ? -1 : 1);
+    this._quad(e.tex, 1, 1, cx, cy, e.w * sx, e.h * sy, props[P.rotation], props, props[P.opacity]);
   }
 
   // ---------- lyrics ----------

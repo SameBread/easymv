@@ -15,7 +15,7 @@ const lines = (text) => String(text).split(/\r?\n/);
 
 /** Plain words of a script line: markup (heading marks, bullets, quotes, **) removed. */
 export function plain(body) {
-  return body.replace(/^\s*(#{1,2}\s+|[-*•]\s+|\d+[.)]\s+|>\s*|--\s*)/, '').replace(/\*\*/g, '').replace(/\[([^\]]+)\]\{[^}]*\}/g, '$1').replace(/\s*\{[^}]*\}/g, '').replace(/[~^]\d*\.?\d+/g, '').replace(/\|/g, '').trim();
+  return body.replace(/^\s*(#{1,2}\s+|[-*•]\s+|\d+[.)]\s+|>\s*|--\s*)/, '').replace(/\*\*/g, '').replace(/<\/?[biusBIUS]>/g, '').replace(/(^|\s)(__|~~)(?=\S)/g, '$1').replace(/(?<=\S)(__|~~)(?=\s|$)/g, '').replace(/\[([^\]]+)\]\{[^}]*\}/g, '$1').replace(/\s*\{[^}]*\}/g, '').replace(/[~^]\d*\.?\d+/g, '').replace(/\|/g, '').trim();
 }
 
 /** Every content line of the script, in order: { k, idx, scene, t, t1, text }. */

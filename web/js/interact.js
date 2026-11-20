@@ -5,6 +5,7 @@ import { P, defaultFit, fitSize } from './animation.js';
 import { visSettings, visExtent } from './visualizer.js';
 import { fxSettings } from './effects.js';
 import { lyricsSettings } from './lyrics.js';
+import { vectorBox } from './vectorlayer.js';
 
 function geometry(item, cw, ch) {
   const { asset, props } = item;
@@ -12,6 +13,7 @@ function geometry(item, cw, ch) {
   if (item.kind === 'visualizer') { const e = visExtent(visSettings(asset.def), Math.min(cw, ch)); bw = e.w; bh = e.h; }
   else if (item.kind === 'effect') { const f = fxSettings(asset.def); bw = f.area[0] * cw; bh = f.area[1] * ch; }
   else if (item.kind === 'script') { bw = cw; bh = ch; }
+  else if (item.kind === 'vector') { const b = vectorBox(asset.def, cw, ch); bw = b.bw; bh = b.bh; }
   else if (item.kind === 'lyrics') {
     const l = lyricsSettings(asset.def);
     bw = l.style.maxWidth * cw; bh = l.style.size * ch * 2.6;

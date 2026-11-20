@@ -11,6 +11,7 @@ import { VIS_MODES, VIS_DEFAULTS } from '../../visualizer.js';
 import { SHAPES, SHAPE_IDS } from '../../shapes.js';
 import { FX_KINDS, FX_IDS, fxSettings } from '../../effects.js';
 import { visSettings } from '../../visualizer.js';
+import { createVectorSections } from './vectorui.js';
 
 const curveFn = {
   linear: (x) => x, easeIn: (x) => x * x, easeOut: (x) => 1 - (1 - x) * (1 - x),
@@ -32,7 +33,7 @@ export function createInspectorPanel(shell) {
       def.id, def.type, def.fx?.kind, def.background, def._error, core.layerIndex(def.id), state.project.elements.length,
       state.project.connections.filter((c) => c.element === def.id).map((c) => [c.property, c.source, c.feature, c.curve, c.combine, !!c.muted]),
       state.project.tracks.filter((t) => t.element === def.id).map((t) => [t.property, t.mode, t.keys.length]),
-      sources(), showAdvanced, [...expanded], def.vis?.mode, def.vis?.shape, def.vis?.gradient, def.visualBlend,
+      sources(), showAdvanced, [...expanded], def.vis?.mode, def.vis?.shape, def.vis?.gradient, def.visualBlend, def.shape?.prst, def.shape?.fillMode, def.chart?.type, def.chart?.grouping, def.table?.header,
     ]);
   };
 
@@ -40,6 +41,8 @@ export function createInspectorPanel(shell) {
 
   const section = (title, iconName, ...body) =>
     h('details.sect', { open: true }, h('summary', icon(iconName), h('span', title), icon('expand_more', 'chev')), h('div.sect-body', body));
+
+  const vec = createVectorSections(section);
 
   const bindNum = (def, path, opts) => {
     const get = () => path.split('.').reduce((o, k) => o?.[k], def);
@@ -384,6 +387,9 @@ export function createInspectorPanel(shell) {
     else if (def.type === 'effect') element.append(effectSection(def));
     else if (def.type === 'lyrics') element.append(lyricsSection(def));
     else if (def.type === 'script') element.append(section('Script', 'slideshow', h('div.note', 'Text, timing, style, background and fonts are in the Script panel. Opacity and blend below work like any layer.'), h('div.row', h('button.btn.tonal', { type: 'button', onclick: () => shell.showPanel('script') }, icon('slideshow'), 'Open Script panel'))));
+    else if (def.type === 'shape') element.append(...vec.shapeSection(def));
+    else if (def.type === 'chart') element.append(...vec.chartSection(def));
+    else if (def.type === 'table') element.append(...vec.tableSection(def));
     else element.append(imageSection(def, asset));
 
     const props = propsFor(def.type).filter((p) => showAdvanced || !p.advanced);

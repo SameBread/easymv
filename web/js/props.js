@@ -33,8 +33,10 @@ export function propsFor(type) {
   if (type === 'effect') ['anchorX', 'anchorY', 'mirrorX', 'mirrorY', 'hueShift'].forEach((n) => skip.add(n));
   if (type === 'script') ['anchorX', 'anchorY', 'mirrorX', 'mirrorY'].forEach((n) => skip.add(n));
   if (type === 'lyrics') ['anchorX', 'anchorY', 'mirrorX', 'mirrorY'].forEach((n) => skip.add(n));
-  if (type !== 'visualizer' && type !== 'effect') skip.add('intensity');
-  return PROPS.filter((p) => !skip.has(p.name));
+  const vec = type === 'shape' || type === 'chart' || type === 'table';
+  if (vec) ['anchorX', 'anchorY'].forEach((n) => skip.add(n));
+  if (type !== 'visualizer' && type !== 'effect' && !vec) skip.add('intensity');
+  return PROPS.filter((p) => !skip.has(p.name)).map((p) => (vec && p.name === 'intensity' ? { ...p, label: 'Reveal', max: 1, def: 1 } : p));
 }
 
 export const toUi = (p, v) => v * p.mul;

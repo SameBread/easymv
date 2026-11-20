@@ -14,6 +14,7 @@ import { createLyricsPanel } from './panels/lyrics.js';
 import { createScriptPanel } from './panels/script.js';
 import { VIS_PRESETS } from '../visualizer.js';
 import { FX_KINDS, FX_IDS } from '../effects.js';
+import { SHAPE_GROUPS, shapeLabel, CHART_TYPES } from '../vector.js';
 
 const PANELS = [
   { id: 'preview', title: 'Preview', icon: 'movie', make: createPreviewPanel },
@@ -121,6 +122,11 @@ export function createShell(root, dv) {
       { label: 'Visualizer', icon: 'graphic_eq', submenu: VIS_PRESETS.map((p, i) => ({ label: p.label ?? p.name, run: () => core.addVisualizer(i) })) },
       { label: 'Effect', icon: 'auto_awesome', submenu: FX_IDS.map((k) => ({ label: FX_KINDS[k].label, icon: FX_KINDS[k].icon, run: () => core.addEffect(k) })) },
       { label: 'Closed captions (CC)', icon: 'closed_caption', run: () => core.addLyrics() },
+      { separator: true },
+      { label: 'Shape', icon: 'category', submenu: SHAPE_GROUPS.map((g) => ({ label: g.label, submenu: g.kinds.map((k) => ({ label: shapeLabel(k), run: () => core.addShape(k) })) })) },
+      { label: 'Chart', icon: 'insert_chart', submenu: CHART_TYPES.map(([k, label]) => ({ label, icon: k === 'pie' || k === 'doughnut' ? 'pie_chart' : k === 'line' || k === 'area' ? 'show_chart' : 'bar_chart', run: () => core.addChart(k) })) },
+      { label: 'Table', icon: 'table_chart', run: () => core.addTable() },
+      { separator: true },
       { label: 'Script (kinetic text)', icon: 'slideshow', submenu: [
         { label: 'Presentation / explainer', icon: 'slideshow', run: async () => { await core.addScript(undefined, 'presentation'); shell.showPanel('script'); } },
         { label: 'Lyrics over a background', icon: 'lyrics', run: async () => { await core.addScript(undefined, 'lyrics'); shell.showPanel('script'); } },
@@ -449,7 +455,8 @@ export function createShell(root, dv) {
 
   shell.pptxDialog = (f, p) => pptxDialog(f, p);
   function pptxDialog(file, parsed) {
-    const opt = { backgrounds: 'keep', timing: 'auto', secs: 5 };
+    const opt = { backgrounds: 'keep', timing: 'auto', secs: 5, objects: 'layers' };
+    const nCharts = parsed.slides.reduce((a, sl) => a + sl.items.filter((i) => i.kind === 'chart').length, 0); const nTables = parsed.slides.reduce((a, sl) => a + sl.items.filter((i) => i.kind === 'table').length, 0);
     const pics = parsed.slides.filter((s) => s.items.some((i) => i.kind === 'pic')).length; const art = parsed.slides.filter((s) => s.hasArt).length;
     const hasSong = !!state.bridge;
     const timingOpts = [['auto', 'Automatic (reading time per slide)'], ['fixed', 'Same seconds for every slide']];
@@ -457,13 +464,14 @@ export function createShell(root, dv) {
     const secs = numField({ label: 'Seconds per slide', value: 5, min: 1, max: 60, step: 0.5, suffix: 's', onChange: (v, f) => { if (f) opt.secs = v; } });
     secs.el.hidden = true;
     dialog({ title: 'Import PowerPoint', wide: true, body: [
-      h('p', `${file.name}: ${parsed.slides.length} slide${parsed.slides.length === 1 ? '' : 's'}, ${art} with graphics or a background, ${pics} with pictures.`),
+      h('p', `${file.name}: ${parsed.slides.length} slide${parsed.slides.length === 1 ? '' : 's'}, ${art} with graphics or a background, ${pics} with pictures${nCharts || nTables ? `, ${nCharts} chart${nCharts === 1 ? '' : 's'}, ${nTables} table${nTables === 1 ? '' : 's'}` : ''}.`),
       h('div.fgrid',
         selectField({ label: 'Backgrounds', value: 'keep', options: [['keep', 'Keep the slide look (graphics + animated text in place)'], ['mix', 'Keep the slide look and add EasyMV effects'], ['auto', 'EasyMV visuals only (just the text, laid out by EasyMV)']], onChange: (v) => { opt.backgrounds = v; } }).el,
-        selectField({ label: 'Timing', value: 'auto', options: timingOpts, onChange: (v) => { opt.timing = v; secs.el.hidden = v !== 'fixed'; } }).el, secs.el),
-      h('p.muted', 'Backgrounds, panels, shapes, pictures and tables become one artwork image per slide. Text becomes animated text placed where it sat on the slide; wordy boxes are split into readable pages. The video grows to fit all slides (no song needed). Slides start at 0:00, so move the layers on the timeline if the music starts later.')],
+        selectField({ label: 'Timing', value: 'auto', options: timingOpts, onChange: (v) => { opt.timing = v; secs.el.hidden = v !== 'fixed'; } }).el, secs.el,
+        nCharts || nTables ? toggle({ label: 'Charts and tables as editable layers', value: true, title: 'Keep their data editable and let them animate in. Off = paint them into the slide artwork.', onChange: (v) => { opt.objects = v ? 'layers' : 'baked'; } }).el : null),
+      h('p.muted', 'Backgrounds, panels, shapes, pictures and SmartArt become one artwork image per slide; charts and tables become their own layers that grow in (data editable in the Inspector). Text becomes animated text placed where it sat on the slide, with bold, italic, underline and strike-through kept; wordy boxes are split into readable pages. The video grows to fit all slides (no song needed). Slides start at 0:00, so move the layers on the timeline if the music starts later.')],
     actions: [{ label: 'Cancel' }, { label: 'Import', variant: 'filled', run: async () => {
-      try { await core.importPptx(parsed, { name: file.name.replace(/\.pptx$/i, ''), backgrounds: opt.backgrounds, perSlide: opt.timing === 'fixed' ? opt.secs : 0, fitToSong: opt.timing === 'fit' }); shell.showPanel('script'); }
+      try { await core.importPptx(parsed, { name: file.name.replace(/\.pptx$/i, ''), backgrounds: opt.backgrounds, perSlide: opt.timing === 'fixed' ? opt.secs : 0, fitToSong: opt.timing === 'fit', objects: opt.objects }); shell.showPanel('script'); }
       catch (e) { core.toast(e.message || 'Import failed.', 5000); return false; } } }] });
   }
 

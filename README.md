@@ -123,3 +123,12 @@ Deferred per the design doc: BPM/beat tracking, threading, lyrics, `wgpu`, audio
 - PowerPoint import (Add → PowerPoint slides…): slides become timed script scenes; backgrounds and pictures kept, mixed with EasyMV effects, or replaced by EasyMV visuals. Parser: web/js/pptx.js (.pptx only, not .ppt).
 - PowerPoint import v2: per-slide artwork (backgrounds, panels/shapes incl. custom geometry, gradients, pictures with crop, tables, master/layout decorations), text placed in its original box with its size/alignment/colour (`::at x:y:w:h`, `{align anchor max role color}` line options), wordy boxes split into readable pages, reading-time durations, video length (`project.lengthSec`) grows to fit. Tool: `web/test/pptx-shots.cjs deck.pptx outdir 2,8,20 keep|mix|auto`.
 - Script syntax additions: lines sharing the same `{at=..}` form one block; `at=x:y:w:h` (percent) exact boxes; line options `align=left|center|right anchor=top|middle|bottom max=<% of height> role=<title|body|…> color=#hex`.
+
+
+## v1.0 — shapes, charts, tables, SmartArt, text styles
+
+- **Text styles** in scripts: `<b> <i> <u> <s>` (also `__underline__`, `~~strike~~`, `word{bold italic underline strike}`). Bold is real bold weight; `**word**` is still the emphasis marker.
+- **Script grammar** is one rule for every line: `[time] marker text {mods}`, marker and time in either order. A `#` only starts a new scene in an untimed outline; timed lines never split a scene (use a blank line or `---`). `##` never splits.
+- **Native layers** (Add menu → Shape / Chart / Table): ~70 preset shapes with fill, gradient, outline, dash, arrowheads, shadow and text; 7 chart types (column, bar, line, area, pie, doughnut, scatter; stacked and 100 %); tables with merged cells (`{2x1}`), header/banded rows and styled text. Paste data from a spreadsheet. Their **Reveal** property (0→1) grows them in and can be keyframed or linked to the music like any property.
+- **PowerPoint import**: charts and tables become editable native layers that grow in; shapes (preset + custom geometry, arrowheads), SmartArt (its stored drawing, else a box row), pictures and backgrounds are painted into one artwork per slide; text keeps bold/italic/underline/strike. Toggle "Charts and tables as editable layers" in the import dialog.
+- Shared code: `web/js/vector.js` (geometry, charts, tables, rich text), `web/js/vectorlayer.js` (layer glue). Tests: `web/test/vector.test.mjs`, `vector-shots.cjs`.

@@ -21,6 +21,8 @@ import { registerFont } from './textcanvas.js';
 import * as TL from './timeline.js';
 import { parsePptx, planSlides, planSlidesAuto, renderSlideArt } from './pptx.js';
 import { PROP_BY_NAME } from './props.js';
+import { CHART_DEFAULTS, CHART_TYPES, TABLE_DEFAULTS, shapeLabel as shapeName } from './vector.js';
+import { SHAPE_DEFAULTS } from './vectorlayer.js';
 
 export const MB = 1024 * 1024;
 export const EXPORT_WARN_SECONDS = 180;
@@ -119,6 +121,9 @@ export const LAYER_TYPE_INFO = {
   effect: { label: 'Effect', icon: 'auto_awesome' },
   lyrics: { label: 'Closed captions', icon: 'closed_caption' },
   script: { label: 'Script', icon: 'slideshow' },
+  shape: { label: 'Shape', icon: 'category' },
+  chart: { label: 'Chart', icon: 'insert_chart' },
+  table: { label: 'Table', icon: 'table_chart' },
 };
 
 // ---------- project model ----------
@@ -162,7 +167,7 @@ export function strip(p) {
   return {
     ...rest,
     // the engine only routes numbers: render-only choices (blend mode, script type) are hidden from it so an older engine build still accepts them
-    elements: p.elements.map(({ _error, name, locked, background, vis, fx, lyrics, script, visualBlend, ...el }) => (el.type === 'script' ? { ...el, type: 'lyrics' } : el)),
+    elements: p.elements.map(({ _error, name, locked, background, vis, fx, lyrics, script, shape, chart, table, visualBlend, ...el }) => (el.type === 'script' || el.type === 'shape' || el.type === 'chart' || el.type === 'table' ? { ...el, type: 'lyrics' } : el)),
     connections: p.connections.filter((c) => !c.muted).map(({ muted, ...c }) => c),
   };
 }
@@ -391,7 +396,7 @@ function dropCachedFor(fileName) {
 
 function takenIds() { return new Set(state.project.elements.map((e) => e.id)); }
 
-const OVERLAY_TYPES = new Set(['effect', 'visualizer', 'lyrics', 'script']);
+const OVERLAY_TYPES = new Set(['effect', 'visualizer', 'lyrics', 'script', 'shape', 'chart', 'table']);
 /** Where a new layer goes: overlays (effects, visualizers, captions, scripts) always on top; pictures just above the
  *  topmost picture, so a new background never lands on top of your effects and text. */
 export function insertIndexFor(def, els = state.project.elements) {
@@ -465,6 +470,32 @@ export async function addLyrics() {
   const id = uniqueId('captions', takenIds());
   const def = { id, name: 'Captions', type: 'lyrics', lyrics: structuredClone(LYRIC_DEFAULTS) };
   await pushLayers([def], 'Add closed captions');
+}
+
+/** Native vector layers: usable in any project (music video, slides, lyric card), not only for imported decks. */
+export async function addShape(prst = 'roundRect', over = {}) {
+  const id = uniqueId('shape', takenIds());
+  const def = { id, name: shapeName(prst), type: 'shape', shape: { ...structuredClone(SHAPE_DEFAULTS), prst, ...(prst === 'line' || prst === 'arc' ? { lineW: 8, w: 0.3, h: 0.0 + 0.001, tail: prst === 'line' ? 'triangle' : 'none' } : null), ...over } };
+  await pushLayers([def], `Add ${def.name.toLowerCase()}`);
+  return id;
+}
+export async function addChart(type = 'column', over = {}) {
+  const id = uniqueId('chart', takenIds());
+  const chart = { ...structuredClone(CHART_DEFAULTS), w: 0.7, h: 0.6, fg: '#ffffff', type, ...over };
+  if (type === 'pie' || type === 'doughnut') chart.series = [{ name: 'Share', values: [40, 25, 20, 15] }], chart.categories = ['Alpha', 'Beta', 'Gamma', 'Delta'], chart.labels = true, chart.legend = 'right';
+  if (type === 'scatter') chart.series = [{ name: 'Points', values: [3, 6, 4, 8, 7], xs: [1, 2, 3, 4, 5] }], chart.categories = ['1', '2', '3', '4', '5'];
+  if (type === 'line' || type === 'area') chart.series = [{ name: 'Series 1', values: [2, 5, 4, 8, 7, 11] }, { name: 'Series 2', values: [1, 3, 6, 5, 9, 8] }], chart.categories = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
+  const def = { id, name: `${CHART_TYPES.find((c) => c[0] === type)?.[1] ?? 'Chart'} chart`, type: 'chart', chart };
+  await pushLayers([def], 'Add chart');
+  // a fresh chart grows in as the layer reveals (Reveal is keyframable, so it is easy to time to the music)
+  return id;
+}
+export async function addTable(data, over = {}) {
+  const id = uniqueId('table', takenIds());
+  const table = { ...structuredClone(TABLE_DEFAULTS), w: 0.7, h: 0.5, fg: '#ffffff', bg: '#14181fd9', border: '#ffffff33', ...(data ? { data } : null), ...over };
+  const def = { id, name: 'Table', type: 'table', table };
+  await pushLayers([def], 'Add table');
+  return id;
 }
 
 /** Add a script layer. `mode` is 'presentation' or 'lyrics' (lyrics = transparent, word-by-word, lower third). */
@@ -1219,12 +1250,14 @@ export async function inspectPptx(file) {
  * slide, with wordy boxes split into readable pages; (3) a video length that grows to fit every slide.
  * backgrounds: 'keep' | 'mix' (keep + EasyMV dust) | 'auto' (EasyMV designs the visuals; only the text is used).
  */
-export async function importPptx(parsed, { name = 'Slides', backgrounds = 'keep', perSlide = 0, fitToSong = false, animate = true, onProgress } = {}) {
+export async function importPptx(parsed, { name = 'Slides', backgrounds = 'keep', perSlide = 0, fitToSong = false, animate = true, objects = 'layers', onProgress } = {}) {
   const { slides } = parsed;
   const [rw, rh] = state.project.resolution;
   const songSec = state.bridge ? totalFrames() / fps() : 0;
   const fitTo = fitToSong && songSec ? songSec : 0;
   let plan; const arts = []; const layers = [];
+  const asLayers = objects === 'layers';
+  const skip = asLayers ? new Set(['chart', 'table']) : new Set();
 
   if (backgrounds === 'auto') plan = planSlidesAuto(parsed, { perSlide, fitTo });
   else {
@@ -1234,9 +1267,9 @@ export async function importPptx(parsed, { name = 'Slides', backgrounds = 'keep'
       onProgress?.(i, slides.length);
       const sl = slides[i];
       if (sl.hidden) { arts.push(null); continue; }
-      const plain = !sl.items.length && sl.bg.type === 'solid';
+      const plain = !sl.items.some((it) => !skip.has(it.kind)) && sl.bg.type === 'solid';
       if (plain && solidKey.has(sl.bg.hex)) { arts.push(solidKey.get(sl.bg.hex)); continue; }
-      const { canvas, tf } = await renderSlideArt(parsed, sl, AW, AH);
+      const { canvas, tf } = await renderSlideArt(parsed, sl, AW, AH, { skip });
       const g = canvas.getContext('2d');
       const lum = (r) => {   // average brightness under a text box (pixels of the art canvas)
         const x0 = Math.max(0, Math.floor(r.x * AW / rw)); const y0 = Math.max(0, Math.floor(r.y * AH / rh));
@@ -1254,6 +1287,7 @@ export async function importPptx(parsed, { name = 'Slides', backgrounds = 'keep'
   }
 
   if (!state.bridge) state.project.lengthSec = Math.ceil(plan.total + 1);
+  const objSpan = (si) => plan.spans[si];
   // script layer
   let id = null;
   if (/\[\d+:\d/.test(plan.text)) {
@@ -1297,6 +1331,39 @@ export async function importPptx(parsed, { name = 'Slides', backgrounds = 'keep'
       }
     }
     if (backgrounds === 'mix') await addEffect('dust');
+  }
+
+  // charts and tables become real layers: editable data, animated entrance, usable like any other layer
+  if (asLayers) {
+    const taken = takenIds(); const defs = [];
+    for (let i = 0; i < slides.length; i++) {
+      const span = objSpan(i); if (!span || slides[i].hidden) continue;
+      const tf = arts[i]?.tf ?? (() => { const s = Math.min(rw / parsed.size.w, rh / parsed.size.h); return { s, ox: (rw - parsed.size.w * s) / 2, oy: (rh - parsed.size.h * s) / 2 }; })();
+      let k = 0;
+      for (const it of slides[i].items) {
+        if (it.kind !== 'chart' && it.kind !== 'table') continue;
+        const b = it.xf;
+        const w = (b.w * tf.s) / rw; const hh = (b.h * tf.s) / rh;
+        const cx = (tf.ox + (b.x + b.w / 2) * tf.s) / rw; const cy = (tf.oy + (b.y + b.h / 2) * tf.s) / rh;
+        const lid = uniqueId(`slide${i + 1}_${it.kind}`, taken); taken.add(lid);
+        const body = { ...structuredClone(it.spec), w, h: hh };
+        defs.push({ def: { id: lid, type: it.kind, name: `Slide ${i + 1} ${it.kind}`, [it.kind]: body, base: { positionX: cx, positionY: cy } }, span, order: k++ });
+      }
+    }
+    if (defs.length) {
+      const scriptDef = id ? layerById(id) : null;
+      if (scriptDef) state.project.elements.splice(state.project.elements.indexOf(scriptDef), 1);
+      await pushLayers(defs.map((d) => d.def), 'Import slide charts and tables', false);
+      if (scriptDef) { state.project.elements.push(scriptDef); normalize(state.project); await syncAssets(); }
+      const f = (x) => Math.round(x * fps());
+      for (const { def, span, order } of defs) {
+        const a = f(span.t0); const b = f(span.t1);
+        TL.setVisibilitySpans(state.project, def.id, [[a, b + f(0.3)]], Math.max(totalFrames(), f(plan.total + 2)));
+        // grow in shortly after the slide appears (staggered when a slide has several), then stay drawn
+        const t0 = a + f(0.35 + order * 0.35); const t1 = t0 + f(animate ? 0.9 : 0.05);
+        state.project.tracks.push({ element: def.id, property: 'intensity', mode: 'override', mix: 0.5, keys: [{ f: a, v: 0, interp: 'linear' }, { f: t0, v: 0, interp: 'linear' }, { f: t1, v: 1, interp: 'linear' }] });
+      }
+    }
   }
   structural(); commit('Import slides');
   if (id) select(id);

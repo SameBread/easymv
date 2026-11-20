@@ -177,7 +177,7 @@ export function defaultFit(def) {
 
 /** Layer kinds. Image-like layers have textures from files; generated layers are drawn procedurally. */
 export const IMAGE_TYPES = ['static', 'spriteSheet', 'gif', 'frameSequence'];
-export const GENERATED_TYPES = ['visualizer', 'effect', 'lyrics', 'script'];
+export const GENERATED_TYPES = ['visualizer', 'effect', 'lyrics', 'script', 'shape', 'chart', 'table'];
 export const isImageType = (t) => IMAGE_TYPES.includes(t);
 export const isGeneratedType = (t) => GENERATED_TYPES.includes(t);
 
@@ -208,7 +208,7 @@ export function buildPlan(assets, frameView, frameIndex, videoFps) {
     const props = new Float32Array(PROPERTY_COUNT);
     for (let p = 0; p < PROPERTY_COUNT; p++) props[p] = frameView.get(ei, p);
 
-    const kind = isGeneratedType(def.type) ? def.type : 'image';
+    const kind = def.type === 'shape' || def.type === 'chart' || def.type === 'table' ? 'vector' : isGeneratedType(def.type) ? def.type : 'image';
     let r = { frame: 0, next: 0, mix: 0 };
     if (kind === 'image') {
       // Step 1: internal timeline (never reads audio).
