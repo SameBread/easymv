@@ -8,7 +8,8 @@ import { state, on, layerById, fmtTimeMs } from '../../core.js';
 import { fontField } from '../fontpicker.js';
 import { h, icon, clear, numField, selectField, colorField, toggle, rafThrottle, showMenu } from '../dom.js';
 import { scriptSettings, compileFor, MODES, applyMode } from '../../script.js';
-import { PACKS, PACK_IDS, LAYOUT_IDS, TRANSITION_IDS, summarize } from '../../kinetic.js';
+import { PACKS, PACK_IDS, LAYOUT_IDS, TRANSITION_IDS, DECO_NAMES, summarize } from '../../kinetic.js';
+import { cheatSheet } from './cheatsheet.js';
 import { listLines, setLineTime, getDir, setDir, sceneRows, scriptToLrc, lrcToScript } from '../../scripttext.js';
 import { parseLrc } from '../../lyrics.js';
 
@@ -121,8 +122,7 @@ export function createScriptPanel(shell) {
           h('button.btn.text', { type: 'button', disabled: !listLines(s.text).some((l) => l.t != null), onclick: () => core.download(new Blob([scriptToLrc(s.text)], { type: 'text/plain' }), `${def.id}.lrc`) }, icon('file_download'), 'Export LRC'),
           h('button.btn.text', { type: 'button', title: 'Make a closed-captions layer with the same lines', onclick: async () => { const id = await core.scriptToCaptions(def.id); if (id) { core.toast('Captions layer created.'); shell.showPanel('lyrics'); } } }, icon('closed_caption'), 'To captions')),
         lrcIn,
-        h('details.script-help', h('summary', 'Syntax cheat sheet'),
-          h('pre', 'EVERY LINE:  [time]  marker  text  {mods}\n  marker: # title  ## sub  - bullet  1. bullet  > quote  -- author\n  [0:12.5] # Big line    or    # [0:12.5] Big line  (either order)\n  [0:12.5-0:15] line     starts and ends\n**word**     emphasise (CAPS and numbers too)\n--- starts a new scene. Once you use ---, blank lines are only\n  spacing; with no --- a blank line ends the scene.\n  An untimed # also starts one (outlines only);\n  timed lines never split a scene, so # can sit among lyrics.\nEach scene keeps its own time: it is on screen from its start\n  until its end, then fades out by itself, even while the next\n  scene is already coming in. Order in the text does not matter.\n::out 0.6  fade-out length (default 0.35)   ::out cut  no fade\n\nTEXT STYLES (look only, no highlight)\n<b>bold</b>  <i>italic</i>  <u>underline</u>  <s>strike</s>\n__underline__  ~~strike~~   word{bold italic underline strike}\n::dur 4  ::layout stack  ::trans push\n::reveal word  ::style retro  ::bg #123456\n::emph color|bar|none   how the key word is highlighted\n\nPLACEMENT (3×3 board, columns A B C, rows 1 2 3)\n::at B2   ::at A1-B2   ::at left   ::at top-right\n::align left|center|right\nline text {at=C3}          whole line to a spot\nword{big}  [two words]{size=1.6 color=accent at=A1 delay=.4 motion=pop}\nnames: left right top bottom middle center top-left …\n\nSYLLABLES (appear one by one)\ncol|laps|ing        default 0.28 s apart\ncol|laps~.6|ing     ~n = seconds before the next\ncol^1.6|laps|ing    ^n = size of that syllable (×)\n**col|laps|ing**{step=.4}   same gap for all'))),
+        cheatSheet({ toast: core.toast, insert: (txt) => edit(def, (x) => { x.text = `${x.text.replace(/\s+$/, '')}\n\n${txt}\n`; }, 'Insert example') })),
     ];
   }
 
@@ -187,6 +187,7 @@ export function createScriptPanel(shell) {
       card('Text', 'text_fields',
         selectField({ label: 'Appear', value: s.reveal, options: [['auto', 'Springy, quick stagger'], ['word', 'Word by word across the line'], ['line', 'Whole line at once']], onChange: set('reveal', 'reveal') }).el,
         selectField({ label: 'Position', value: s.place, options: [['full', 'Full screen'], ['lower', 'Lower third'], ['middle', 'Middle band'], ['upper', 'Upper third']], onChange: set('place', 'position') }).el,
+        selectField({ label: 'Decoration', value: s.deco, title: 'Lines, frames and highlights drawn around the text. Off by default. In the text: ::deco bar', options: [['none', 'None'], ...DECO_NAMES.map((n) => [n, n.replace('-', ' ')])], onChange: set('deco', 'decoration') }).el,
         selectField({ label: 'Layouts', value: s.layouts, options: [['all', 'All (varied, dynamic)'], ['calm', 'Calm (centre, left, diagonal)']], onChange: set('layouts', 'layouts') }).el,
         numField({ label: 'Shadow', value: s.shadow * 100, min: 0, max: 100, step: 5, suffix: '%', title: 'Soft dark shadow behind the text, for busy backgrounds', onChange: (v) => set('shadow', 'shadow')(v / 100) }).el,
         customColor('fg', 'Text colour', '#ffffff'), customColor('accent', 'Accent', '#ff3d71'),

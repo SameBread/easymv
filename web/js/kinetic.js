@@ -141,6 +141,14 @@ const TIME_TAG = new RegExp(String.raw`^\[${TT}(?:\s*[-\u2013>]\s*${TT})?\]\s*`)
 const tsec = (a, b, c) => Number(a) * 60 + Number(b) + (c ? Number(c) / 10 ** c.length : 0);
 
 /** `{size=1.5 color=accent at=C3 delay=.3 motion=pop}` -> { size, color, at, delay, motion }. Bare words: big, small, accent, dim. */
+/** Per-word effects that keep moving while the word is on screen:  word{shake}  word{fx=bounce+rainbow amp=1.5 speed=2} */
+export const FX_NAMES = ['shake', 'tremble', 'bounce', 'hop', 'wave', 'wobble', 'swing', 'pulse', 'heartbeat', 'breathe', 'float', 'drift', 'spin', 'flicker', 'blink', 'glitch', 'jelly', 'rubber', 'rainbow'];
+const FX_SET = new Set(FX_NAMES);
+/** Decorations drawn around a scene's text:  ::deco bar  /  ::deco underline+brackets color=#ff0 */
+export const DECO_NAMES = ['bar', 'bar-right', 'bars', 'underline', 'overline', 'rules', 'box', 'brackets', 'panel', 'highlight', 'diamonds'];
+const DECO_SET = new Set(DECO_NAMES);
+export const parseFxList = (str) => String(str ?? '').toLowerCase().split(/[+|,\s]+/).filter((x) => FX_SET.has(x));
+
 export function parseMods(str) {
   const m = {};
   for (const tok of String(str).split(/[\s,]+/).filter(Boolean)) {
@@ -159,6 +167,10 @@ export function parseMods(str) {
     else if (k === 'anchor' && /^(top|middle|bottom)$/i.test(v ?? '')) m.anchor = v.toLowerCase();
     else if (k === 'max' && v != null && Number(v) > 0) m.max = Math.min(40, Number(v));
     else if (k === 'role' && v) m.role = v.toLowerCase();
+    else if (k === 'fx' && v) m.fx = parseFxList(v);
+    else if (FX_SET.has(k) && v == null) (m.fx ??= []).push(k);
+    else if (k === 'amp' && v != null && Number.isFinite(Number(v))) m.amp = clamp(Number(v), 0, 4);
+    else if (k === 'speed' && v != null && Number.isFinite(Number(v))) m.speed = clamp(Number(v), 0.1, 6);
     else if (k === 'bold' || k === 'italic' || k === 'underline' || k === 'strike') (m.st ??= {})[k[0]] = v !== '0' && v !== 'off';
     else if (/^[A-Ca-c][1-3]$/.test(k) && v == null) m.at = tok;
   }
@@ -465,7 +477,7 @@ function layoutLeft(cx, sc, box, W, H) {
   const { b } = fitBlock(cx, sceneLines(sc), bx, 'left');
   const runs = placeBlock(cx, sceneLines(sc), b, bx, { align: 'left' });
   const top = Math.min(...runs.map((r) => r.y - r.size * 0.55)); const bot = Math.max(...runs.map((r) => r.y + r.size * 0.55));
-  return { runs, decor: [{ k: 'rect', x: box.x - W * 0.005, y: top, w: Math.max(6, W * 0.008), h: bot - top, c: 'accent' }] };
+  return { runs, decor: [{ k: 'rect', x: box.x - W * 0.005, y: top, w: Math.max(6, W * 0.008), h: bot - top, c: 'accent', bar: true }] };
 }
 
 function layoutDiagonal(cx, sc, box) {
@@ -569,7 +581,7 @@ function layoutSplit(cx, sc, box, W, H) {
   const rb2 = placeBlock(cx, rest, rb.b, right, { align: 'left' });
   for (const r of rb2) r.li += 1;
   const dx = box.x + box.w * 0.485;
-  return { runs: [...rr, ...rb2], decor: [{ k: 'rect', x: dx - 3, y: box.y + box.h * 0.12, w: 6, h: box.h * 0.76, c: 'accent', grow: 'y' }] };
+  return { runs: [...rr, ...rb2], decor: [{ k: 'rect', x: dx - 3, y: box.y + box.h * 0.12, w: 6, h: box.h * 0.76, c: 'accent', grow: 'y', bar: true }] };
 }
 
 function layoutStat(cx, sc, box, W, H) {
@@ -647,12 +659,42 @@ function planPalette(P, sc, i, seed, prevIdx, ov = {}) {
   return { idx, bg, bg2, fg, accent, onAccent: readable(accent) };
 }
 
-const IN_FOR = { pop: 'pop', drop: 'drop', slideL: 'slideL', slideR: 'slideR', zoom: 'zoom', flip: 'flip', rise: 'rise', fade: 'fade', tilt: 'tilt', type: 'type' };
+const IN_FOR = { spin: 'spin', stretch: 'stretch', swing: 'swing', bounce: 'bounce', pop: 'pop', drop: 'drop', slideL: 'slideL', slideR: 'slideR', zoom: 'zoom', flip: 'flip', rise: 'rise', fade: 'fade', tilt: 'tilt', type: 'type' };
 
 /**
  * Lay out and time every scene. ctx: { W, H, measure, total?, fonts? }.
  * The result depends only on the script text and ctx (never on time or randomness).
  */
+/** Shapes around the text block. `spec` = "bar+underline color=#ff0 w=2" (names from DECO_NAMES, or none). */
+function makeDeco(spec, runs, W, H) {
+  const toks = spec.toLowerCase().split(/[\s,+]+/).filter(Boolean);
+  const names = toks.filter((x) => DECO_SET.has(x)); if (!names.length || !runs.length) return [];
+  const kv = (k) => { const m = new RegExp(`(?:^|[\\s,])${k}[=:]([^\\s,]+)`, 'i').exec(spec); return m ? m[1] : null; };
+  const c = kv('colou?r') ?? 'accent'; const wm = clamp(Number(kv('w') ?? kv('width') ?? 1) || 1, 0.3, 6);
+  const x0 = Math.min(...runs.map((r) => r.x - r.w / 2)); const x1 = Math.max(...runs.map((r) => r.x + r.w / 2));
+  const y0 = Math.min(...runs.map((r) => r.y - r.size * 0.55)); const y1 = Math.max(...runs.map((r) => r.y + r.size * 0.55));
+  const avg = runs.reduce((a, r) => a + r.size, 0) / runs.length; const pad = Math.max(8, avg * 0.35); const th = Math.max(3, H * 0.006 * wm);
+  const out = []; const R = (x, y, w, h, extra = {}) => out.push({ k: 'rect', x, y, w, h, c, ...extra });
+  const bw = x1 - x0; const bh = y1 - y0;
+  for (const n of new Set(names)) {
+    if (n === 'bar' || n === 'bars') R(x0 - pad - th, y0, th, bh, { grow: 'y' });
+    if (n === 'bar-right' || n === 'bars') R(x1 + pad, y0, th, bh, { grow: 'y' });
+    if (n === 'underline') R(x0, y1 + pad * 0.5, bw, th);
+    if (n === 'overline' || n === 'rules') R(x0, y0 - pad * 0.5 - th, bw, th);
+    if (n === 'rules') R(x0, y1 + pad * 0.5, bw, th);
+    if (n === 'box') { const X = x0 - pad; const Y = y0 - pad; const w = bw + pad * 2; const h = bh + pad * 2; R(X, Y, w, th); R(X, Y + h - th, w, th); R(X, Y, th, h, { grow: 'y' }); R(X + w - th, Y, th, h, { grow: 'y' }); }
+    if (n === 'brackets') {
+      const X = x0 - pad; const Y = y0 - pad; const w = bw + pad * 2; const h = bh + pad * 2; const L = Math.min(w, h) * 0.22;
+      R(X, Y, L, th); R(X, Y, th, L, { grow: 'y' }); R(X + w - L, Y, L, th); R(X + w - th, Y, th, L, { grow: 'y' });
+      R(X, Y + h - th, L, th); R(X, Y + h - L, th, L, { grow: 'y' }); R(X + w - L, Y + h - th, L, th); R(X + w - th, Y + h - L, th, L, { grow: 'y' });
+    }
+    if (n === 'panel') R(x0 - pad * 1.4, y0 - pad, bw + pad * 2.8, bh + pad * 2, { a: 0.3 });
+    if (n === 'highlight') R(x0 - pad * 0.4, y0 + bh * 0.52, bw + pad * 0.8, bh * 0.42, { a: 0.45 });
+    if (n === 'diamonds') { const d = th * 3; for (let k = -1; k <= 1; k++) R((x0 + x1) / 2 + k * d * 2.6 - d / 2, y1 + pad * 0.7, d, d, { rot: 0.785 }); }
+  }
+  return out;
+}
+
 export function compileScript(script, ctx) {
   annotate(script);
   const { W, H } = ctx;
@@ -763,6 +805,8 @@ export function compileScript(script, ctx) {
     const spring = { k: SP.spring.k * (0.7 + 0.6 * energy), z: SP.spring.z };
     const step = SP.step * (1.35 - 0.7 * energy);
     const lineCount = new Map();
+    const sceneFx = sc.dir.fx != null ? parseFxList(sc.dir.fx) : parseFxList(opts.fx);
+    const sceneAmp = clamp(Number(sc.dir.amp ?? opts.amp ?? 1) || 1, 0, 4); const sceneSpeed = clamp(Number(sc.dir.speed ?? opts.speed ?? 1) || 1, 0.1, 6);
     const runs = lay.runs.flatMap((r0, idx) => {
       let r = r0;
       const li = r.li >= 0 ? r.li : 0;
@@ -770,6 +814,8 @@ export function compileScript(script, ctx) {
       if (!r.syl && !r.deco && sc.lines[li]) { const w = sc.lines[li].words.find((x) => x.syl && x.t.toLowerCase() === String(r.text).toLowerCase()); if (w) r = { ...r, syl: w.syl, mod: r.mod ?? w.mod }; }
       if (!r.mod && !r.deco && sc.lines[li]) { const w = sc.lines[li].words.find((x) => x.mod && x.t.toLowerCase() === String(r.text).toLowerCase()); if (w) r = { ...r, mod: w.mod, size: r.size * (w.mod.size ?? 1) }; }
       if (!r.st && !r.deco && r.wi >= 0 && sc.lines[li]?.words[r.wi]?.st && String(sc.lines[li].words[r.wi].t).toLowerCase() === String(r.text).toLowerCase()) r = { ...r, st: sc.lines[li].words[r.wi].st };
+      const lmod = sc.lines[li]?.mod;
+      const fxl = r.mod?.fx ?? lmod?.fx ?? sceneFx;
       const mc = r.mod?.color;
       const c = mc ?? r.color ?? (r.emph && emphStyle === 'color' ? 'accent' : r.role === 'whisper' || r.role === 'cite' ? 'dim' : 'fg');
       const onBar = r.emph && emphStyle === 'bar' && !r.deco && !mc;
@@ -779,7 +825,8 @@ export function compileScript(script, ctx) {
       rt += r.mod?.delay ?? 0;
       const base = { ...r, idx, font: scx.font(r.role), weight: scx.weight(r.role, r.st), color: onBar ? 'onAccent' : c,
         t0: r.deco ? lineT[0] : rt, anim: { type: r.deco ? 'zoom' : (IN_FOR[r.mod?.motion] ?? inType), spring },
-        bar: onBar, phase: rnd(seed, 'ph', i, idx) * 6.283 };
+        bar: onBar, phase: rnd(seed, 'ph', i, idx) * 6.283,
+        ...(fxl.length && !r.deco ? { fx: fxl, fxAmp: r.mod?.amp ?? lmod?.amp ?? sceneAmp, fxSpeed: r.mod?.speed ?? lmod?.speed ?? sceneSpeed } : {}) };
       if (!r.syl || r.deco) return [base];
       // syllables: one run each, left to right inside the word's box, appearing one by one
       const parts = r.syl.map((p) => scx.text(r.role, p.t));
@@ -792,7 +839,10 @@ export function compileScript(script, ctx) {
       });
     });
     // character-level reveal for short title runs when the scene asks for it (typewriter)
-    const decor = (lay.decor ?? []).map((dc) => ({ ...dc, t0: dc.li != null ? lineT[dc.li] : t0 + lead, spring }));
+    // Decorations are off unless asked for (::deco bar, or @deco bar for every scene). The layouts' own side bars are gone by default.
+    const decoSpec = String(sc.dir.deco ?? opts.deco ?? ctx.deco ?? 'none');
+    const decor = [...(lay.decor ?? []).filter((dc) => !dc.bar), ...makeDeco(decoSpec, lay.runs.filter((r) => !r.deco), W, H)]
+      .map((dc) => ({ ...dc, t0: dc.li != null ? lineT[dc.li] : t0 + lead, spring }));
     const bgKind = bgMode === 'none' ? 'none' : bgMode === 'solid' ? 'solid' : (sc.dir.bgstyle ?? pick(SP.bgs, rnd(seed, 'bg', i)));
     // Every scene owns its own exit: its text fades over `outD` seconds and stays on screen while that happens, even if the
     // next scene has already started. `::out 0.6` sets the length, `::out cut` removes the fade. An explicit end time means
@@ -839,6 +889,38 @@ export function spring(u, k, z) {
   return 1 - Math.exp(-w * u) * (1 + w * u);
 }
 
+const hsl = (h, s2, l) => { const k = (n) => (n + h / 30) % 12; const a = s2 * Math.min(l, 1 - l); const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1))); return [f(0) * 255, f(8) * 255, f(4) * 255]; };
+/** Continuous per-word effects. Everything is a pure function of the time, so scrubbing and export match the preview. */
+function fxApply(st, r, t, u, sz) {
+  const A = r.fxAmp ?? 1; const S = r.fxSpeed ?? 1; const ph = r.phase ?? 0; const wi = Math.max(0, r.wi ?? 0);
+  const k = easeOutCubic(clamp(u / 0.4, 0, 1));          // effects ease in after the word arrives
+  const T = t * S;
+  for (const f of r.fx) {
+    switch (f) {
+      case 'shake': { const n = Math.floor(T * 22); st.dx += (rnd('shx', r.idx, n) - 0.5) * sz * 0.14 * A * k; st.dy += (rnd('shy', r.idx, n) - 0.5) * sz * 0.14 * A * k; st.rot += (rnd('shr', r.idx, n) - 0.5) * 0.08 * A * k; break; }
+      case 'tremble': { const n = Math.floor(T * 40); st.dx += (rnd('trx', r.idx, n) - 0.5) * sz * 0.045 * A * k; st.dy += (rnd('try', r.idx, n) - 0.5) * sz * 0.045 * A * k; break; }
+      case 'bounce': { const b = Math.abs(Math.sin(T * 4 + wi * 0.5)); st.dy -= b * sz * 0.22 * A * k; st.sy *= 1 - (1 - b) * 0.08 * A * k; st.sx *= 1 + (1 - b) * 0.06 * A * k; break; }
+      case 'hop': { const c = (T * 1.4 + wi * 0.15) % 1; const h2 = c < 0.35 ? Math.sin((c / 0.35) * Math.PI) : 0; st.dy -= h2 * sz * 0.4 * A * k; break; }
+      case 'wave': st.dy += Math.sin(T * 3.2 + wi * 0.8 + ph * 0.1) * sz * 0.13 * A * k; break;
+      case 'wobble': st.rot += Math.sin(T * 4 + ph) * 0.13 * A * k; break;
+      case 'swing': st.rot += Math.sin(T * 1.8 + wi * 0.4) * 0.25 * A * k; st.dy += (1 - Math.cos(T * 1.8 + wi * 0.4)) * sz * 0.03 * A * k; break;
+      case 'pulse': { const p = 1 + Math.sin(T * 5 + ph) * 0.09 * A * k; st.sx *= p; st.sy *= p; break; }
+      case 'heartbeat': { const c = (T * 1.2) % 1; const b = Math.exp(-((c - 0.12) ** 2) * 220) + 0.6 * Math.exp(-((c - 0.34) ** 2) * 260); const p = 1 + b * 0.18 * A * k; st.sx *= p; st.sy *= p; break; }
+      case 'breathe': { const p = 1 + Math.sin(T * 1.3 + ph) * 0.05 * A * k; st.sx *= p; st.sy *= p; break; }
+      case 'float': st.dy += Math.sin(T * 1.1 + ph) * sz * 0.1 * A * k; st.dx += Math.cos(T * 0.8 + ph) * sz * 0.04 * A * k; break;
+      case 'drift': st.dx += Math.sin(T * 0.6 + ph) * sz * 0.2 * A * k; st.dy += Math.cos(T * 0.45 + ph) * sz * 0.1 * A * k; break;
+      case 'spin': st.rot += T * 2 * A; break;
+      case 'flicker': { const n = Math.floor(T * 14); st.alpha *= 1 - rnd('fl', r.idx, n) * 0.7 * Math.min(1, A) * k; break; }
+      case 'blink': st.alpha *= Math.sin(T * 5 + ph) > -0.2 + (1 - Math.min(1, A)) ? 1 : 0.1; break;
+      case 'glitch': { const n = Math.floor(T * 9); if (rnd('gl', r.idx, n) > 0.78) { st.dx += (rnd('glx', r.idx, n) - 0.5) * sz * 0.5 * A; st.sx *= 1 + (rnd('gls', r.idx, n) - 0.3) * 0.5 * A; } break; }
+      case 'jelly': { const d = Math.sin(T * 7 + ph) * 0.1 * A * k; st.sx *= 1 + d; st.sy *= 1 - d; break; }
+      case 'rubber': { const c = Math.sin(T * 3 + wi * 0.6); st.sx *= 1 + c * 0.16 * A * k; st.sy *= 1 - c * 0.12 * A * k; break; }
+      case 'rainbow': st.color = hsl((T * 70 + wi * 38 + ph * 12) % 360, 0.85, 0.62); break;
+      default: break;
+    }
+  }
+}
+
 function runState(r, t, sc, pulse, W, H) {
   const u = t - r.t0;
   if (u < 0) return null;
@@ -856,8 +938,13 @@ function runState(r, t, sc, pulse, W, H) {
     case 'tilt': st.rot += (1 - s) * (r.idx % 2 ? 0.3 : -0.3); st.dy = (1 - s) * sz * 0.4; break;
     case 'fade': st.alpha = clamp(u / 0.5, 0, 1); break;
     case 'type': st.clip = clamp(u / 0.25, 0, 1); break;
+    case 'spin': st.rot += (1 - s) * -6.283; st.sx = st.sy = lerp(0.2, 1, s); st.alpha = clamp(u / 0.15, 0, 1); break;
+    case 'stretch': st.sx = lerp(2.4, 1, s); st.sy = Math.max(0.05, lerp(0.2, 1, s)); st.alpha = clamp(u / 0.12, 0, 1); break;
+    case 'swing': st.rot += (1 - s) * 0.9 * (r.idx % 2 ? 1 : -1); st.dy = -(1 - s) * sz * 0.5; break;
+    case 'bounce': st.dy = -sz * 1.5 * Math.abs(Math.cos(u * 9)) * Math.exp(-u * 4.5); break;
     default: break;
   }
+  if (r.fx?.length && !r.deco) fxApply(st, r, t, u, sz);
   if (r.deco) { st.alpha *= 0.55; }
   const p = 1 + pulse * sc.pulse * (r.emph ? 1.7 : 0.55) * (r.deco ? 0 : 1);
   st.sx *= p; st.sy *= p;
@@ -929,11 +1016,11 @@ function sceneGeometry(sc, t, W, H, pulse) {
   const u = t - sc.t0;
   for (const d of sc.decor) {
     const e = spring(t - d.t0, d.spring.k * 0.5, 0.9); if (e <= 0) continue;
-    const c = sc.pal[d.c] ?? sc.pal.accent;
-    if (d.grow === 'y') pushRect(geo, d.x, d.y + d.h * (1 - e) / 2, d.w, d.h * e, 0, c, 1);
-    else if (d.rot) pushRect(geo, d.x, d.y, d.w * e, d.h * e, d.rot, c, 1);
-    else if (d.w < d.h) pushRect(geo, d.x, d.y + d.h * (1 - Math.min(1, e)), d.w, d.h * Math.min(1, e), 0, c, 1);
-    else pushRect(geo, d.x, d.y, d.w * Math.min(1, e), d.h, 0, c, 1);
+    const c = sc.pal[d.c] ?? (/^#?[0-9a-f]{3}([0-9a-f]{3})?$/i.test(String(d.c)) ? hexToRgb(String(d.c)) : sc.pal.accent); const a = d.a ?? 1;
+    if (d.grow === 'y') pushRect(geo, d.x, d.y + d.h * (1 - e) / 2, d.w, d.h * e, 0, c, a);
+    else if (d.rot) pushRect(geo, d.x, d.y, d.w * e, d.h * e, d.rot, c, a);
+    else if (d.w < d.h) pushRect(geo, d.x, d.y + d.h * (1 - Math.min(1, e)), d.w, d.h * Math.min(1, e), 0, c, a);
+    else pushRect(geo, d.x, d.y, d.w * Math.min(1, e), d.h, 0, c, a);
   }
   void u;
   return geo;
@@ -949,7 +1036,7 @@ function sceneRuns(sc, t, W, H, pulse) {
       const e = spring(t - r.t0 - 0.05, 220, 0.9);
       if (e > 0) bars.push({ x: r.x - r.w / 2 - r.size * 0.12, y: r.y - r.size * 0.42, w: (r.w + r.size * 0.24) * Math.min(1, e), h: r.size * 0.86, rot: r.rot ?? 0, cx: r.x, cy: r.y, c: sc.pal.accent });
     }
-    out.push({ text: r.text, font: r.font, weight: r.weight, st: r.st, size: r.size, color: rgbToHex(dim), x: r.x + st.dx, y: r.y + st.dy, sx: st.sx, sy: st.sy, rot: st.rot, alpha: st.alpha, clip: st.clip });
+    out.push({ text: r.text, font: r.font, weight: r.weight, st: r.st, size: r.size, color: st.color ? rgbToHex(st.color) : rgbToHex(dim), x: r.x + st.dx, y: r.y + st.dy, sx: st.sx, sy: st.sy, rot: st.rot, alpha: st.alpha, clip: st.clip });
   }
   return { runs: out, bars };
 }

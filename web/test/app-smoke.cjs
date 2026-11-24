@@ -373,6 +373,23 @@ const srv = http.createServer((q, s) => {
     check('pptx: a broken file gives a readable error', /not a valid/.test(bad), bad);
 
 
+    // ---- script cheat sheet + decoration setting ----
+    const cs = await E(async () => {
+      const c = easymv.core; const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const id = await c.addScript(undefined, 'lyrics'); easymv.shell.showPanel('script'); c.select(id); await sleep(300);
+      const d = document.querySelector('.script-help'); if (d) d.open = true;
+      const rows = document.querySelectorAll('.cs-row').length; const syn = document.querySelectorAll('.cs-row.syntax').length; const ins = document.querySelectorAll('.cs-row.instruction').length;
+      const copies = []; const orig = navigator.clipboard?.writeText?.bind(navigator.clipboard);
+      try { Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (t) => { copies.push(t); } }, configurable: true }); } catch { /* ignore */ }
+      document.querySelector('.cs-code')?.click(); await sleep(100);
+      const before = c.state.project.elements.find((e) => e.id === id).script.text;
+      [...document.querySelectorAll('.script-help button')].find((b) => /Add example/.test(b.textContent))?.click(); await sleep(300);
+      const after = c.state.project.elements.find((e) => e.id === id).script.text;
+      c.removeLayers([id]); void orig;
+      return { rows, syn, ins, copies, grew: after.length > before.length && /::deco underline/.test(after) };
+    });
+    check('cheat sheet: syntax and instruction rows are separate and copyable', cs.rows > 30 && cs.syn > 10 && cs.ins > 10 && cs.copies.length === 1 && cs.grew, JSON.stringify(cs));
+
     // ---- v1.1: Slideshow folder ----
     const dk = await E(async () => {
       const c = easymv.core; const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

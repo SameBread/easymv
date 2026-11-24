@@ -138,3 +138,9 @@ Deferred per the design doc: BPM/beat tracking, threading, lyrics, `wgpu`, audio
 
 - **Slideshow folder.** A PowerPoint import (or *Add → Slideshow from images…*) becomes one folder layer. Its master row holds the timing for every slide: **Starts at**, **Ends by** (open = song end), and a mode: reading time, same seconds each, even across the window, or by text across the window. Per-slide seconds and transitions override the mode. The folder's artwork, chart/table layers and text script are all rebuilt from it, so you can put your own intro or ending outside the folder. The eye on the master hides the whole slideshow, including in exports.
 - **Scenes own their exit.** In a script, every scene fades out by itself (`::out 0.6` to change, `::out cut` for none) and stays on screen while the next scene comes in, so text no longer pops away when a new scene starts at the same time stamp. Scenes are paired by time, not by their order in the text. With `---` in a script, blank lines are only spacing.
+
+## v1.2 — script decorations, word effects, cheat sheet
+
+- **The red line beside lyrics** was the Left and Split layouts' own accent bar. Those bars are now off. Decorations are opt-in: `::deco bar` (this scene) or `@deco bar` (whole script), or Look → Text → Decoration. Styles: bar, bar-right, bars, underline, overline, rules, box, brackets, panel, highlight, diamonds. Combine with `+`, set `color=#ff0` and `w=2`.
+- **Word effects:** `word{shake}`, `word{fx=bounce+rainbow amp=2 speed=1.5}`, on a bracketed group, at the end of a line, or for a whole scene (`::fx wave`) or script (`@fx breathe`). Effects: shake tremble bounce hop wave wobble swing pulse heartbeat breathe float drift spin flicker blink glitch jelly rubber rainbow. New arrival motions: spin stretch swing bounce.
+- The Script tab's syntax cheat sheet now separates **Syntax** (inside a line) from **Instruction** (`::`/`@` lines), and every example is click-to-copy.

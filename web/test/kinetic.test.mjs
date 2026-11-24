@@ -218,3 +218,42 @@ test('nothing is drawn before the first scene starts', () => {
   const c = mk('[0:05] hi there', { bgMode: 'scenes' });
   assert.equal(frameAt(c, 1, {}).passes.length, 0);
 });
+
+test('layout side bars are off by default and ::deco turns decorations on', () => {
+  const base = '::layout left\n::emph none\n[0:01] hello there world';
+  const off = mk(base, { bgMode: 'none' });
+  assert.equal(off.scenes[0].decor.length, 0, 'no bar unless asked');
+  const on = mk('::layout left\n::deco bar+underline color=#ff0000\n[0:01] hello there world', { bgMode: 'none' });
+  assert.ok(on.scenes[0].decor.length >= 2);
+  assert.ok(on.scenes[0].decor.every((d) => d.c === '#ff0000'));
+  const all = mk('@deco brackets\n[0:01] one\n---\n[0:04] two', { bgMode: 'none' });
+  assert.ok(all.scenes.every((s) => s.decor.length === 8));
+  const g = frameAt(on, 1.5, {}).passes[0].geo; assert.ok(g.n > 0);
+  const none = frameAt(off, 1.5, {}).passes[0].geo; assert.equal(none.n, 0);
+});
+test('every decoration name makes shapes', async () => {
+  const { DECO_NAMES } = await import('../js/kinetic.js');
+  for (const n of DECO_NAMES) assert.ok(mk(`::deco ${n}\n[0:01] hi there`, { bgMode: 'none' }).scenes[0].decor.length > 0, n);
+});
+test('per-word effects parse from {fx=..}, bare names, lines and scenes', async () => {
+  const { FX_NAMES } = await import('../js/kinetic.js');
+  const c = mk('[0:01] plain shaky{shake} bouncy{fx=bounce+rainbow amp=2 speed=3}\n[0:02] all wave {wave}\n::fx pulse\n---\n[0:05] scene wide', { bgMode: 'none' });
+  const runs = (i) => c.scenes[i].runs;
+  const find = (i, txt) => runs(i).find((r) => r.text.toLowerCase() === txt);
+  assert.equal(find(0, 'shaky').fx.join(), 'shake');
+  assert.deepEqual(find(0, 'bouncy').fx, ['bounce', 'rainbow']); assert.equal(find(0, 'bouncy').fxAmp, 2); assert.equal(find(0, 'bouncy').fxSpeed, 3);
+  assert.equal(find(0, 'plain').fx?.join(), 'pulse');
+  assert.equal(find(1, 'scene').fx, undefined);
+  for (const n of FX_NAMES) {
+    const k = mk(`[0:01] word{${n}}`, { bgMode: 'none' });
+    for (let t = 1.2; t < 2; t += 0.13) assert.ok(frameAt(k, t, {}).passes[0].runs.every((r) => Number.isFinite(r.x) && Number.isFinite(r.y) && Number.isFinite(r.alpha) && Number.isFinite(r.rot)), n);
+  }
+});
+test('effects move the word and are repeatable', () => {
+  const k = mk('[0:01] word{shake}', { bgMode: 'none' });
+  const at = (t) => frameAt(k, t, {}).passes[0].runs[0];
+  assert.ok(Math.abs(at(1.8).x - at(1.9).x) + Math.abs(at(1.8).y - at(1.9).y) > 0);
+  assert.equal(at(1.85).x, at(1.85).x);
+  const r = mk('[0:01] word{rainbow}', { bgMode: 'none' });
+  assert.notEqual(frameAt(r, 1.5, {}).passes[0].runs[0].color, frameAt(r, 1.9, {}).passes[0].runs[0].color);
+});

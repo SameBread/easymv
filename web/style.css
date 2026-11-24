@@ -432,3 +432,25 @@ textarea.script-text:focus { outline: 1px solid var(--md-primary); }
 .deck-slide .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .deck-slide .t small { display: block; opacity: .65; font-size: .75em; }
 .deck-slide input.sm, .deck-slide select.sm, .text-input.sm { width: 100%; min-width: 0; padding: 4px 6px; font-size: .88em; }
+
+/* ---- script cheat sheet ---- */
+.cs { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.cs-legend { font-size: 12px; line-height: 1.7; color: var(--md-on-surface-variant); }
+.cs-legend code, .cs-note code { font-family: ui-monospace, monospace; background: var(--md-surface-container-highest); padding: 0 4px; border-radius: 4px; }
+.cs-sec h4 { margin: 10px 0 2px; font-size: 13px; letter-spacing: .02em; }
+.cs-note { margin: 0 0 6px; font-size: 12px; color: var(--md-on-surface-variant); }
+.cs-rows { display: flex; flex-direction: column; gap: 6px; }
+.cs-row { display: grid; grid-template-columns: 1fr; gap: 3px; padding: 6px 8px; border-radius: 8px; background: var(--md-surface-container); border-left: 3px solid var(--md-primary); }
+.cs-row.instruction { border-left-color: var(--md-tertiary); }
+.cs-kind { font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--md-primary); }
+.cs-kind.instruction, .cs-row.instruction .cs-kind { color: var(--md-tertiary); }
+.cs-legend .cs-kind { padding: 1px 6px; border-radius: 999px; background: var(--md-surface-container-highest); }
+.cs-code { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; text-align: left; border: 1px dashed var(--md-outline); background: var(--md-surface-container-highest); color: var(--md-on-surface); border-radius: 6px; padding: 4px 8px; cursor: pointer; font: inherit; }
+.cs-code:hover { border-style: solid; background: color-mix(in srgb, var(--md-primary) 14%, var(--md-surface-container-highest)); }
+.cs-code code { font-family: ui-monospace, monospace; font-size: 12.5px; white-space: pre-wrap; word-break: break-word; }
+.cs-code .icon, .cs-code svg { flex: none; width: 16px; height: 16px; opacity: .6; }
+.cs-what { font-size: 12px; color: var(--md-on-surface-variant); line-height: 1.4; }
+.cs-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; align-items: center; }
+.cs-chip-label { width: 100%; font-size: 11px; color: var(--md-on-surface-variant); }
+.cs-chip { border: 1px solid var(--md-outline-variant); background: var(--md-surface-container-highest); color: var(--md-on-surface); border-radius: 999px; padding: 2px 9px; font: 12px ui-monospace, monospace; cursor: pointer; }
+.cs-chip:hover { background: color-mix(in srgb, var(--md-primary) 18%, var(--md-surface-container-highest)); }
