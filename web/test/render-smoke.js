@@ -68,8 +68,8 @@ try {
 
   const scr = new GeneratedAsset({ id: 'k', type: 'script', script: { text: '# Hello world\nBig **ideas** here\n\n- one\n- two', pack: 'punchy', seed: 2 } });
   await frame([dark, scr], [props({}), props({})], 0, 60); out.scriptLit = lit(snap());
-  await frame([dark, scr], [props({}), props({})], 0, 60 + 30 * 3); out.scriptLit2 = lit(snap());
-  await frame([dark, scr], [props({}), props({})], 0, 60 + 30 * 3 - 4); out.scriptTrans = lit(snap());
+  await frame([dark, scr], [props({}), props({})], 0, 60 + 30 * 2); out.scriptLit2 = lit(snap());
+  await frame([dark, scr], [props({}), props({})], 0, 60 + 30 * 1 + 2); out.scriptTrans = lit(snap());
 
   // ---- stacking audit: effects must overlay, not cover; order must be respected ----
   const blue = { ...back, def: { id: 'bl', type: 'static' }, async textureSource() { return { image: await bmp(mk(8, 8, (g) => { g.fillStyle = '#3366aa'; g.fillRect(0, 0, 8, 8); })) }; } };

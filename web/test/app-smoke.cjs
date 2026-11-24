@@ -351,20 +351,20 @@ const srv = http.createServer((q, s) => {
       const file = new File([zipSync(files)], 'deck.pptx');
       const parsed = await easymv.core.inspectPptx(file);
       const before = easymv.core.state.project.elements.length;
-      const id = await easymv.core.importPptx(parsed, { name: 'deck', backgrounds: 'keep', perSlide: 4 });
+      const id = await easymv.core.importPptx(parsed, { name: 'deck', backgrounds: 'keep', timing: { mode: 'fixed', fixed: 4, start: 2 } });
       const st = easymv.core.state.project;
       const sl = parsed.slides;
       return { n: sl.length, t1: sl[0].title, bg: sl[0].bg, blocks2: sl[1].blocks.map((b) => b.paras.map((p) => p.text)), pic: sl[1].items.filter((i) => i.kind === 'pic').length,
-        script: st.elements.find((e) => e.id === id)?.script.text ?? '', added: st.elements.length - before, bgMode: st.elements.find((e) => e.id === id)?.script.bgMode,
+        master: st.elements.find((e) => e.id === id), script: st.elements.find((e) => e.id === st.elements.find((x) => x.id === id)?.deck?.script)?.script.text ?? '', added: st.elements.length - before, bgMode: st.elements.find((e) => e.id === st.elements.find((x) => x.id === id)?.deck?.script)?.script.bgMode,
         vis: st.tracks.filter((x) => x.property === 'visible').length, op: st.tracks.filter((x) => x.property === 'opacity').length, len: st.lengthSec, frames: easymv.core.totalFrames(),
         types: st.elements.map((e) => e.type).join(',') };
     });
     check('pptx: slides, title and background colour read', pp.n === 2 && pp.t1 === 'Big Title' && pp.bg?.hex === '#112233', JSON.stringify(pp));
     check('pptx: body paragraphs (with real bold tags) and the picture read', pp.blocks2.flat().some((x) => x.includes('<b>bold</b>')) && pp.pic === 1, JSON.stringify(pp.blocks2));
-    check('pptx: text keeps its position (exact-box blocks) and has timed scenes', /\[0:00\.00-[0-9:.]+\] Big Title \{at=[\d.]+:[\d.]+:[\d.]+:[\d.]+ /.test(pp.script) && /role=title/.test(pp.script), pp.script);
-    check('pptx: one art layer per slide, shown on its slide with fade + zoom', pp.added === 3 && pp.vis >= 2 && pp.op >= 1 && pp.bgMode === 'none', JSON.stringify(pp));
-    check('pptx: video length grows to the slides', pp.len >= 4 && pp.frames >= pp.len * 30, JSON.stringify(pp));
-    check('pptx: script stays on top of imported art', pp.types.lastIndexOf('static') < pp.types.indexOf('script'), pp.types);
+    check('pptx: text keeps its position (exact-box blocks) and has timed scenes', /\[0:02\.00-[0-9:.]+\] Big Title \{at=[\d.]+:[\d.]+:[\d.]+:[\d.]+ /.test(pp.script) && /role=title/.test(pp.script), pp.script);
+    check('pptx: one art layer per slide, shown on its slide with fade + zoom', pp.added === 4 && pp.master?.type === 'deck' && pp.vis >= 2 && pp.op >= 1 && pp.bgMode === 'none', JSON.stringify(pp));
+    check('pptx: video length grows to the slides', pp.len >= 10 && pp.frames >= pp.len * 30, JSON.stringify(pp));
+    check('pptx: script stays on top of imported art', pp.types.includes('deck') && pp.types.lastIndexOf('static') < pp.types.indexOf('script'), pp.types);
     await E(() => easymv.shell.pptxDialog({ name: 'deck.pptx' }, { slides: [{ items: [], bg: { type: 'solid', hex: '#fff' }, blocks: [], hasArt: false }], size: { w: 1, h: 1 }, media: new Map() }));
     await pg.waitForTimeout(200);
     check('pptx dialog opens with background and timing choices', (await pg.locator('dialog[open] select').count()) === 2 && /1 slide/.test(await pg.locator('dialog[open]').innerText()));
@@ -372,6 +372,41 @@ const srv = http.createServer((q, s) => {
     const bad = await E(async () => { try { await easymv.core.inspectPptx(new File([new Uint8Array([1, 2, 3])], 'x.pptx')); return 'no error'; } catch (e) { return e.message; } });
     check('pptx: a broken file gives a readable error', /not a valid/.test(bad), bad);
 
+
+    // ---- v1.1: Slideshow folder ----
+    const dk = await E(async () => {
+      const c = easymv.core; const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const m = c.state.project.elements.find((e) => e.type === 'deck'); const mid = m.id;
+      const kids = c.state.project.elements.filter((e) => e.group === mid);
+      easymv.shell.showPanel('layers'); c.select(mid); await sleep(300);
+      const rowsTxt = document.body.innerText;
+      const firstVis = () => { const t = c.state.project.tracks.filter((x) => x.property === 'visible' && kids.some((k) => k.id === x.layerId)); return t.length; };
+      const scriptId = m.deck.script; const txt0 = c.state.project.elements.find((e) => e.id === scriptId).script.text;
+      c.setDeck(mid, { start: 5, mode: 'fixed', fixed: 3 }, 'test'); await sleep(200);
+      const txt1 = c.state.project.elements.find((e) => e.id === scriptId).script.text;
+      const sp = c.deckTiming(mid);
+      easymv.shell.showPanel('inspector'); c.select(mid); await sleep(300);
+      const insp = document.body.innerText;
+      c.setDeck(mid, { off: true }, 'off'); await sleep(100);
+      const offVis = c.state.project.elements.filter((e) => e.group === mid && e.type !== 'script').every((e) => (e.base?.visible ?? 1) === 0 || true);
+      c.setDeck(mid, { off: false }, 'on');
+      const strip = c.state.project.elements.length;
+      c.removeLayers([mid]); await sleep(100);
+      const left = c.state.project.elements.filter((e) => e.id === mid || e.group === mid).length;
+      return { n: kids.length, rowsTxt: /Slideshow/.test(rowsTxt), txt0, txt1, start: sp.start, total: sp.total, insp, offVis, left, strip, vis: firstVis() };
+    });
+    check('slideshow: folder shows in Layers with its children', dk.n >= 2 && dk.rowsTxt, JSON.stringify({ n: dk.n }));
+    check('slideshow: retiming the folder rewrites the script timestamps and spans', /\[0:05\.00-/.test(dk.txt1) && dk.start === 5 && Math.abs(dk.total - 11) < 0.01, dk.txt1.slice(0, 120));
+    check('slideshow: inspector shows start/end and the slide table', /STARTS AT/i.test(dk.insp) && /ENDS BY/i.test(dk.insp) && /Slides/i.test(dk.insp), dk.insp.slice(0, 200));
+    check('slideshow: removing the folder removes its children', dk.left === 0, String(dk.left));
+    const imgs = await E(async () => {
+      const c = easymv.core; const mk = async (col) => { const cv = document.createElement('canvas'); cv.width = 32; cv.height = 18; const g = cv.getContext('2d'); g.fillStyle = col; g.fillRect(0, 0, 32, 18); return new File([await new Promise((r) => cv.toBlob(r, 'image/png'))], `${col.slice(1)}.png`, { type: 'image/png' }); };
+      const fs = [await mk('#e33'), await mk('#3e3'), await mk('#33e')];
+      const id = await c.importImagesAsDeck(fs, { name: 'Pics', timing: { mode: 'fixed', fixed: 2, start: 1, end: null } });
+      const m = c.state.project.elements.find((e) => e.id === id); const sp = c.deckTiming(id);
+      return { type: m?.type, slides: m?.deck.slides.length, start: sp.start, total: sp.total, kids: c.state.project.elements.filter((e) => e.group === id).length };
+    });
+    check('slideshow: images become a timed folder', imgs.type === 'deck' && imgs.slides === 3 && imgs.start === 1 && Math.abs(imgs.total - 7) < 0.01 && imgs.kids === 3, JSON.stringify(imgs));
 
     // ---- v1: native Shape / Chart / Table layers, usable without any slides ----
     const vec = await E(async () => {

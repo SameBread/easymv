@@ -12,6 +12,7 @@ import { SHAPES, SHAPE_IDS } from '../../shapes.js';
 import { FX_KINDS, FX_IDS, fxSettings } from '../../effects.js';
 import { visSettings } from '../../visualizer.js';
 import { createVectorSections } from './vectorui.js';
+import { createDeckSections } from './deckui.js';
 
 const curveFn = {
   linear: (x) => x, easeIn: (x) => x * x, easeOut: (x) => 1 - (1 - x) * (1 - x),
@@ -33,7 +34,7 @@ export function createInspectorPanel(shell) {
       def.id, def.type, def.fx?.kind, def.background, def._error, core.layerIndex(def.id), state.project.elements.length,
       state.project.connections.filter((c) => c.element === def.id).map((c) => [c.property, c.source, c.feature, c.curve, c.combine, !!c.muted]),
       state.project.tracks.filter((t) => t.element === def.id).map((t) => [t.property, t.mode, t.keys.length]),
-      sources(), showAdvanced, [...expanded], def.vis?.mode, def.vis?.shape, def.vis?.gradient, def.visualBlend, def.shape?.prst, def.shape?.fillMode, def.chart?.type, def.chart?.grouping, def.table?.header,
+      sources(), showAdvanced, [...expanded], def.vis?.mode, def.vis?.shape, def.vis?.gradient, def.visualBlend, def.shape?.prst, def.shape?.fillMode, def.deck && JSON.stringify([def.deck.start, def.deck.end, def.deck.mode, def.deck.fixed, def.deck.fade, def.deck.trans, def.deck.animate, def.deck.off, def.deck.slides.map((s) => [s.dur, s.trans, s.hidden, s.title])]), def.deck && core.deckTiming(def.id)?.total.toFixed(2), shell.deckSlide, def.chart?.type, def.chart?.grouping, def.table?.header,
     ]);
   };
 
@@ -43,6 +44,7 @@ export function createInspectorPanel(shell) {
     h('details.sect', { open: true }, h('summary', icon(iconName), h('span', title), icon('expand_more', 'chev')), h('div.sect-body', body));
 
   const vec = createVectorSections(section);
+  const deckUi = createDeckSections(section, shell);
 
   const bindNum = (def, path, opts) => {
     const get = () => path.split('.').reduce((o, k) => o?.[k], def);
@@ -382,6 +384,7 @@ export function createInspectorPanel(shell) {
     }
     const asset = state.assets[core.layerIndex(def.id)];
     const rows = [];
+    if (def.type === 'deck') { element.append(...deckUi.sections(def)); live.push({ rows }); refreshLive(); return; }
     element.append(headerSection(def));
     if (def.type === 'visualizer') element.append(visualizerSection(def));
     else if (def.type === 'effect') element.append(effectSection(def));

@@ -14,6 +14,7 @@ import { createLyricsPanel } from './panels/lyrics.js';
 import { createScriptPanel } from './panels/script.js';
 import { VIS_PRESETS } from '../visualizer.js';
 import { FX_KINDS, FX_IDS } from '../effects.js';
+import { DECK_MODES, parseClock, clockText } from '../deck.js';
 import { SHAPE_GROUPS, shapeLabel, CHART_TYPES } from '../vector.js';
 
 const PANELS = [
@@ -117,6 +118,7 @@ export function createShell(root, dv) {
   function addItems() {
     return [
       { label: 'Images, GIFs, frames…', icon: 'image', run: shell.pickImages },
+      { label: 'Slideshow from images…', icon: 'folder_open', run: () => shell.pickSlideshowImages() },
       { label: 'Demo layer', icon: 'auto_fix_high', run: () => core.addDemo() },
       { separator: true },
       { label: 'Visualizer', icon: 'graphic_eq', submenu: VIS_PRESETS.map((p, i) => ({ label: p.label ?? p.name, run: () => core.addVisualizer(i) })) },
@@ -454,26 +456,56 @@ export function createShell(root, dv) {
   }
 
   shell.pptxDialog = (f, p) => pptxDialog(f, p);
+  /** Start / End / mode controls shared by the PowerPoint import and "Slideshow from images". Edits `t` in place. */
+  function timingFields(t) {
+    const song = state.bridge ? core.totalFrames() / (core.fps?.() ?? 30) : 0;
+    const clock = (label, key, ph) => {
+      const input = h('input.text-input.clock', { type: 'text', placeholder: ph, inputmode: 'decimal', spellcheck: false, 'aria-label': label });
+      input.addEventListener('change', () => {
+        const v = input.value.trim() ? parseClock(input.value) : null;
+        if (v !== null && Number.isNaN(v)) { input.value = ''; t[key] = null; core.toast('Time looks like 1:23 or 83.5', 2500); return; }
+        t[key] = v;
+      });
+      const here = h('button.icon-btn.sm', { type: 'button', title: 'Use the playhead time', 'aria-label': `${label}: use playhead`, onclick: () => { const v = state.frame / (core.fps?.() ?? 30); input.value = clockText(v); t[key] = v; } }, icon('near_me'));
+      return h('label.fld.col', h('span.fld-label', label), h('span.clock-row', input, here));
+    };
+    const secs = numField({ label: 'Seconds per slide', value: t.fixed, min: 0.5, max: 600, step: 0.5, suffix: 's', onChange: (v, f) => { if (f !== false) t.fixed = v; } });
+    const hint = h('div.note');
+    const sync = () => { secs.el.hidden = t.mode !== 'fixed'; hint.textContent = DECK_MODES.find((m) => m[0] === t.mode)?.[2] ?? ''; };
+    const mode = selectField({ label: 'Timing', value: t.mode, options: DECK_MODES.map(([v, l]) => [v, l]), onChange: (v) => { t.mode = v; sync(); } }).el;
+    sync();
+    return [h('div.row.two', clock('Starts at', 'start', '0:00'), clock('Ends by', 'end', song ? `song end ${clockText(song)}` : 'open')),
+      mode, secs.el, hint,
+      h('p.muted', song ? 'Slides become a Slideshow folder. You can change all of this later in the Inspector, and anything outside the folder (an intro, an ending) is yours.' : 'No song yet. “Even” modes need one, so add a song first or use Reading time or Same seconds.')];
+  }
+
   function pptxDialog(file, parsed) {
-    const opt = { backgrounds: 'keep', timing: 'auto', secs: 5, objects: 'layers' };
+    const hasText = parsed.slides.some((s) => (s.blocks ?? []).some((b) => (b.paras ?? []).some((q) => (q.text ?? '').trim())));
+    const hasSong = !!state.bridge;
+    const opt = { backgrounds: 'keep', objects: 'layers' };
+    const t = { mode: hasSong && !hasText ? 'even' : 'reading', start: null, end: null, fixed: 5 };
     const nCharts = parsed.slides.reduce((a, sl) => a + sl.items.filter((i) => i.kind === 'chart').length, 0); const nTables = parsed.slides.reduce((a, sl) => a + sl.items.filter((i) => i.kind === 'table').length, 0);
     const pics = parsed.slides.filter((s) => s.items.some((i) => i.kind === 'pic')).length; const art = parsed.slides.filter((s) => s.hasArt).length;
-    const hasSong = !!state.bridge;
-    const timingOpts = [['auto', 'Automatic (reading time per slide)'], ['fixed', 'Same seconds for every slide']];
-    if (hasSong) timingOpts.push(['fit', 'Stretch to the song length']);
-    const secs = numField({ label: 'Seconds per slide', value: 5, min: 1, max: 60, step: 0.5, suffix: 's', onChange: (v, f) => { if (f) opt.secs = v; } });
-    secs.el.hidden = true;
     dialog({ title: 'Import PowerPoint', wide: true, body: [
       h('p', `${file.name}: ${parsed.slides.length} slide${parsed.slides.length === 1 ? '' : 's'}, ${art} with graphics or a background, ${pics} with pictures${nCharts || nTables ? `, ${nCharts} chart${nCharts === 1 ? '' : 's'}, ${nTables} table${nTables === 1 ? '' : 's'}` : ''}.`),
       h('div.fgrid',
         selectField({ label: 'Backgrounds', value: 'keep', options: [['keep', 'Keep the slide look (graphics + animated text in place)'], ['mix', 'Keep the slide look and add EasyMV effects'], ['auto', 'EasyMV visuals only (just the text, laid out by EasyMV)']], onChange: (v) => { opt.backgrounds = v; } }).el,
-        selectField({ label: 'Timing', value: 'auto', options: timingOpts, onChange: (v) => { opt.timing = v; secs.el.hidden = v !== 'fixed'; } }).el, secs.el,
         nCharts || nTables ? toggle({ label: 'Charts and tables as editable layers', value: true, title: 'Keep their data editable and let them animate in. Off = paint them into the slide artwork.', onChange: (v) => { opt.objects = v ? 'layers' : 'baked'; } }).el : null),
-      h('p.muted', 'Backgrounds, panels, shapes, pictures and SmartArt become one artwork image per slide; charts and tables become their own layers that grow in (data editable in the Inspector). Text becomes animated text placed where it sat on the slide, with bold, italic, underline and strike-through kept; wordy boxes are split into readable pages. The video grows to fit all slides (no song needed). Slides start at 0:00, so move the layers on the timeline if the music starts later.')],
+      h('div.fgrid', ...timingFields(t)),
+      h('p.muted', 'The slides arrive as one Slideshow folder: artwork, charts, tables and text, all timed by the folder.')],
     actions: [{ label: 'Cancel' }, { label: 'Import', variant: 'filled', run: async () => {
-      try { await core.importPptx(parsed, { name: file.name.replace(/\.pptx$/i, ''), backgrounds: opt.backgrounds, perSlide: opt.timing === 'fixed' ? opt.secs : 0, fitToSong: opt.timing === 'fit', objects: opt.objects }); shell.showPanel('script'); }
+      try { await core.importPptx(parsed, { name: file.name.replace(/\.pptx$/i, ''), backgrounds: opt.backgrounds, objects: opt.objects, timing: { mode: t.mode, start: t.start ?? 0, end: t.end, fixed: t.fixed } }); shell.showPanel('inspector'); }
       catch (e) { core.toast(e.message || 'Import failed.', 5000); return false; } } }] });
   }
+
+  shell.pickSlideshowImages = () => filePicker('image/*,.gif', true, (fs) => {
+    if (!fs.length) return;
+    const t = { mode: state.bridge ? 'even' : 'fixed', start: null, end: null, fixed: 5 };
+    dialog({ title: `Slideshow from ${fs.length} image${fs.length === 1 ? '' : 's'}`, wide: true, body: [h('div.fgrid', ...timingFields(t))],
+      actions: [{ label: 'Cancel' }, { label: 'Create', variant: 'filled', run: async () => {
+        try { await core.importImagesAsDeck(fs, { name: 'Slideshow', timing: { mode: t.mode, start: t.start ?? 0, end: t.end, fixed: t.fixed }, animate: true }); shell.showPanel('inspector'); }
+        catch (e) { core.toast(e.message || 'Could not make the slideshow.', 5000); return false; } } }] });
+  });
 
   const helpDialog = () => dialog({ title: 'Quick start', wide: true, body: [
     h('ol.help', h('li', 'Choose a song (Audio → Choose song). It is analyzed in your browser; nothing is uploaded.'),

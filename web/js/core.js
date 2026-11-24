@@ -21,6 +21,7 @@ import { registerFont } from './textcanvas.js';
 import * as TL from './timeline.js';
 import { parsePptx, planSlides, planSlidesAuto, renderSlideArt } from './pptx.js';
 import { PROP_BY_NAME } from './props.js';
+import { DECK_DEFAULTS, deckSettings, deckSpans, buildDeckScript, artMotion, objectMotion } from './deck.js';
 import { CHART_DEFAULTS, CHART_TYPES, TABLE_DEFAULTS, shapeLabel as shapeName } from './vector.js';
 import { SHAPE_DEFAULTS } from './vectorlayer.js';
 
@@ -124,6 +125,7 @@ export const LAYER_TYPE_INFO = {
   shape: { label: 'Shape', icon: 'category' },
   chart: { label: 'Chart', icon: 'insert_chart' },
   table: { label: 'Table', icon: 'table_chart' },
+  deck: { label: 'Slideshow', icon: 'folder_open' },
 };
 
 // ---------- project model ----------
@@ -167,7 +169,7 @@ export function strip(p) {
   return {
     ...rest,
     // the engine only routes numbers: render-only choices (blend mode, script type) are hidden from it so an older engine build still accepts them
-    elements: p.elements.map(({ _error, name, locked, background, vis, fx, lyrics, script, shape, chart, table, visualBlend, ...el }) => (el.type === 'script' || el.type === 'shape' || el.type === 'chart' || el.type === 'table' ? { ...el, type: 'lyrics' } : el)),
+    elements: p.elements.map(({ _error, name, locked, background, vis, fx, lyrics, script, shape, chart, table, deck, group, collapsed, visualBlend, ...el }) => (el.type === 'deck' || el.type === 'script' || el.type === 'shape' || el.type === 'chart' || el.type === 'table' ? { ...el, type: 'lyrics' } : el)),
     connections: p.connections.filter((c) => !c.muted).map(({ muted, ...c }) => c),
   };
 }
@@ -396,7 +398,7 @@ function dropCachedFor(fileName) {
 
 function takenIds() { return new Set(state.project.elements.map((e) => e.id)); }
 
-const OVERLAY_TYPES = new Set(['effect', 'visualizer', 'lyrics', 'script', 'shape', 'chart', 'table']);
+const OVERLAY_TYPES = new Set(['effect', 'visualizer', 'lyrics', 'script', 'shape', 'chart', 'table', 'deck']);
 /** Where a new layer goes: overlays (effects, visualizers, captions, scripts) always on top; pictures just above the
  *  topmost picture, so a new background never lands on top of your effects and text. */
 export function insertIndexFor(def, els = state.project.elements) {
@@ -556,7 +558,14 @@ export function setScript(id, mutate, label = 'Edit script', key = null) {
 export async function removeLayers(ids) {
   const p = state.project;
   const set = new Set(ids);
+  for (const e of [...p.elements]) if (e.type === 'deck' && set.has(e.id)) for (const k of p.elements) if (k.group === e.id) set.add(k.id);   // deleting a folder deletes what is inside it
+  const touched = new Set(p.elements.filter((e) => set.has(e.id) && e.group && !set.has(e.group)).map((e) => e.group));
   p.elements = p.elements.filter((e) => !set.has(e.id));
+  for (const gid of touched) {   // a piece of a slideshow was deleted: forget it in the model
+    const g = p.elements.find((e) => e.id === gid); if (!g?.deck) continue;
+    if (set.has(g.deck.script)) g.deck.script = null;
+    for (const sl of g.deck.slides) { if (set.has(sl.art)) sl.art = null; sl.objects = (sl.objects ?? []).filter((o) => !set.has(o)); }
+  }
   p.connections = p.connections.filter((c) => !set.has(c.element));
   p.tracks = p.tracks.filter((t) => !set.has(t.element));
   normalize(p);
@@ -571,6 +580,7 @@ export async function duplicateLayer(id) {
   const p = state.project;
   const i = layerIndex(id); if (i < 0) return;
   const src = p.elements[i];
+  if (src.type === 'deck' || src.group) { toast('Slideshow pieces cannot be duplicated on their own. Re-import, or duplicate the folder contents by hand.', 4500); return; }
   const nid = uniqueId(id, takenIds());
   const copy = { ...structuredClone(src), id: nid, name: `${layerName(src)} copy` };
   delete copy._error;
@@ -590,10 +600,30 @@ export function reorderLayer(id, to, label = 'Reorder layers') {
   const from = layerIndex(id);
   to = clamp(Math.round(to), 0, p.elements.length - 1);
   if (from < 0 || from === to) return;
-  const [el] = p.elements.splice(from, 1);
-  p.elements.splice(to, 0, el);
+  const moved = p.elements[from];
+  if (moved.type === 'deck') {   // a folder moves as one block
+    const block = p.elements.filter((e) => e.group === id || e === moved);
+    p.elements = p.elements.filter((e) => !block.includes(e));
+    p.elements.splice(Math.max(0, Math.min(p.elements.length, to - (block.length - 1))), 0, ...block);
+  } else {
+    const [el] = p.elements.splice(from, 1);
+    p.elements.splice(to, 0, el);
+  }
   normalize(p);
   // engine element indices changed
+  syncAssets().then(() => { structural(); commit(label); });
+}
+
+/** Put a layer (or a whole folder) directly above `refId` in the stack, or at the very back when refId is null. */
+export function placeAbove(id, refId, label = 'Reorder layers') {
+  const p = state.project; const m = layerById(id); if (!m) return;
+  const block = m.type === 'deck' ? p.elements.filter((e) => e.group === id || e === m) : [m];
+  const rest = p.elements.filter((e) => !block.includes(e));
+  const at = refId == null ? 0 : rest.findIndex((e) => e.id === refId) + 1;
+  if (refId != null && at === 0) return;
+  rest.splice(at, 0, ...block);
+  if (rest.every((e, i) => e === p.elements[i])) return;
+  p.elements = rest; normalize(p);
   syncAssets().then(() => { structural(); commit(label); });
 }
 
@@ -1250,16 +1280,19 @@ export async function inspectPptx(file) {
  * slide, with wordy boxes split into readable pages; (3) a video length that grows to fit every slide.
  * backgrounds: 'keep' | 'mix' (keep + EasyMV dust) | 'auto' (EasyMV designs the visuals; only the text is used).
  */
-export async function importPptx(parsed, { name = 'Slides', backgrounds = 'keep', perSlide = 0, fitToSong = false, animate = true, objects = 'layers', onProgress } = {}) {
+/**
+ * Import a deck as a Slideshow folder. `timing` = { mode, start, end, fixed } (see deck.js); the master layer keeps the model,
+ * so the timing can be changed afterwards from the Inspector.
+ */
+export async function importPptx(parsed, { name = 'Slides', backgrounds = 'keep', animate = true, objects = 'layers', timing = {}, onProgress } = {}) {
   const { slides } = parsed;
   const [rw, rh] = state.project.resolution;
   const songSec = state.bridge ? totalFrames() / fps() : 0;
-  const fitTo = fitToSong && songSec ? songSec : 0;
   let plan; const arts = []; const layers = [];
   const asLayers = objects === 'layers';
   const skip = asLayers ? new Set(['chart', 'table']) : new Set();
 
-  if (backgrounds === 'auto') plan = planSlidesAuto(parsed, { perSlide, fitTo });
+  if (backgrounds === 'auto') plan = planSlidesAuto(parsed);
   else {
     const AW = Math.min(1600, Math.max(1280, rw)); const AH = Math.round((AW * rh) / rw);
     const solidKey = new Map();
@@ -1283,91 +1316,162 @@ export async function importPptx(parsed, { name = 'Slides', backgrounds = 'keep'
       if (plain) info.key = `solid:${sl.bg.hex}`;
       arts.push(info); if (plain) solidKey.set(sl.bg.hex, info);
     }
-    plan = planSlides(parsed, { W: rw, H: rh, perSlide, fitTo, art: arts });
+    plan = planSlides(parsed, { W: rw, H: rh, art: arts });
   }
 
-  if (!state.bridge) state.project.lengthSec = Math.ceil(plan.total + 1);
-  const objSpan = (si) => plan.spans[si];
-  // script layer
-  let id = null;
+  // ---- the layers (timing comes later, from the deck model) ----
+  const taken = takenIds();
+  const slidesModel = plan.deckSlides.map((d, i) => ({ ...d, n: i + 1, title: d.title || slides[i]?.title || '', dur: null, trans: null, art: null, objects: [], solid: false }));
+  let scriptId = null;
   if (/\[\d+:\d/.test(plan.text)) {
-    id = await addScript(plan.text, 'presentation', name);
-    const def = layerById(id);
-    Object.assign(def.script, { bgMode: backgrounds === 'auto' ? 'scenes' : 'none', fit: 'script', label: 'Imported slides' });
-    if (backgrounds !== 'auto') def.script.pack = 'editorial';
-    def.script.pack = backgrounds === 'auto' ? 'punchy' : 'editorial';
+    scriptId = await addScript(plan.text, 'presentation', name);
+    const def = layerById(scriptId);
+    Object.assign(def.script, { bgMode: backgrounds === 'auto' ? 'scenes' : 'none', fit: 'script', label: 'Slide text', pack: backgrounds === 'auto' ? 'punchy' : 'editorial' });
+    def.name = `${name} — text`;
   }
-
-  // artwork layers
+  const kids = [];
   if (backgrounds !== 'auto') {
-    const taken = takenIds(); const defs = []; const shared = new Map();
+    const defs = []; const shared = new Map();
     for (let i = 0; i < slides.length; i++) {
-      const a = arts[i]; const span = plan.spans[i]; if (!a || !span) continue;
-      const fr = [Math.round(span.t0 * fps()), Math.round(span.t1 * fps())];
-      if (a.key && shared.has(a.key)) { shared.get(a.key).spans.push(fr); continue; }
+      const a = arts[i]; if (!a || slides[i].hidden) continue;
+      if (a.key && shared.has(a.key)) { slidesModel[i].art = shared.get(a.key); slidesModel[i].solid = true; continue; }
       const blob = await (a.canvas.convertToBlob ? a.canvas.convertToBlob({ type: 'image/png' }) : new Promise((r) => a.canvas.toBlob(r, 'image/png')));
       const file = new File([blob], `pptx_${slug(name)}_slide${String(i + 1).padStart(3, '0')}.png`, { type: 'image/png' });
       const lid = uniqueId(slug(file.name), taken); taken.add(lid);
-      const L = { def: { id: lid, type: 'static', path: file.name, fit: 'cover', name: `Slide ${i + 1} art` }, file, spans: [fr], solid: !!a.key };
-      state.files.set(file.name, file); defs.push(L); layers.push(L);
-      if (a.key) shared.set(a.key, L);
+      state.files.set(file.name, file); defs.push({ id: lid, type: 'static', path: file.name, fit: 'cover', name: `Slide ${i + 1} art` });
+      slidesModel[i].art = lid; slidesModel[i].solid = !!a.key; if (a.key) shared.set(a.key, lid);
     }
-    if (defs.length) {
-      await pushLayers(defs.map((d) => d.def), 'Import slide art', false);
-      const fade = 0.4;
-      for (const L of defs) {
-        const f = (x) => Math.round(x * fps());
-        const spans = L.spans.map(([a, b]) => [a, b + (L.solid ? 0 : f(fade))]);
-        TL.setVisibilitySpans(state.project, L.def.id, spans, Math.max(totalFrames(), f(plan.total + 2)));
-        if (animate && !L.solid) {
-          const op = []; const sc = [];
-          for (const [a, b] of L.spans) {
-            op.push({ f: a, v: 0, interp: 'linear' }, { f: a + f(fade), v: 1, interp: 'linear' }, { f: Math.max(a + f(fade), b), v: 1, interp: 'linear' }, { f: b + f(fade), v: 0, interp: 'linear' });
-            sc.push({ f: a, v: 1, interp: 'linear' }, { f: b + f(fade), v: 1.045, interp: 'linear' });
-          }
-          state.project.tracks.push({ element: L.def.id, property: 'opacity', mode: 'override', mix: 0.5, keys: op });
-          state.project.tracks.push({ element: L.def.id, property: 'scale', mode: 'override', mix: 0.5, keys: sc });
-        }
-      }
-    }
+    if (defs.length) { await pushLayers(defs, 'Import slide art', false); kids.push(...defs.map((d) => d.id)); }
     if (backgrounds === 'mix') await addEffect('dust');
   }
-
-  // charts and tables become real layers: editable data, animated entrance, usable like any other layer
   if (asLayers) {
-    const taken = takenIds(); const defs = [];
+    const defs = [];
     for (let i = 0; i < slides.length; i++) {
-      const span = objSpan(i); if (!span || slides[i].hidden) continue;
+      if (slides[i].hidden) continue;
       const tf = arts[i]?.tf ?? (() => { const s = Math.min(rw / parsed.size.w, rh / parsed.size.h); return { s, ox: (rw - parsed.size.w * s) / 2, oy: (rh - parsed.size.h * s) / 2 }; })();
-      let k = 0;
       for (const it of slides[i].items) {
         if (it.kind !== 'chart' && it.kind !== 'table') continue;
         const b = it.xf;
         const w = (b.w * tf.s) / rw; const hh = (b.h * tf.s) / rh;
         const cx = (tf.ox + (b.x + b.w / 2) * tf.s) / rw; const cy = (tf.oy + (b.y + b.h / 2) * tf.s) / rh;
         const lid = uniqueId(`slide${i + 1}_${it.kind}`, taken); taken.add(lid);
-        const body = { ...structuredClone(it.spec), w, h: hh };
-        defs.push({ def: { id: lid, type: it.kind, name: `Slide ${i + 1} ${it.kind}`, [it.kind]: body, base: { positionX: cx, positionY: cy } }, span, order: k++ });
+        defs.push({ id: lid, type: it.kind, name: `Slide ${i + 1} ${it.kind}`, [it.kind]: { ...structuredClone(it.spec), w, h: hh }, base: { positionX: cx, positionY: cy } });
+        slidesModel[i].objects.push(lid);
       }
     }
-    if (defs.length) {
-      const scriptDef = id ? layerById(id) : null;
-      if (scriptDef) state.project.elements.splice(state.project.elements.indexOf(scriptDef), 1);
-      await pushLayers(defs.map((d) => d.def), 'Import slide charts and tables', false);
-      if (scriptDef) { state.project.elements.push(scriptDef); normalize(state.project); await syncAssets(); }
-      const f = (x) => Math.round(x * fps());
-      for (const { def, span, order } of defs) {
-        const a = f(span.t0); const b = f(span.t1);
-        TL.setVisibilitySpans(state.project, def.id, [[a, b + f(0.3)]], Math.max(totalFrames(), f(plan.total + 2)));
-        // grow in shortly after the slide appears (staggered when a slide has several), then stay drawn
-        const t0 = a + f(0.35 + order * 0.35); const t1 = t0 + f(animate ? 0.9 : 0.05);
-        state.project.tracks.push({ element: def.id, property: 'intensity', mode: 'override', mix: 0.5, keys: [{ f: a, v: 0, interp: 'linear' }, { f: t0, v: 0, interp: 'linear' }, { f: t1, v: 1, interp: 'linear' }] });
-      }
-    }
+    if (defs.length) { await pushLayers(defs, 'Import slide charts and tables', false); kids.push(...defs.map((d) => d.id)); }
   }
-  structural(); commit('Import slides');
-  if (id) select(id);
-  const note = state.bridge && !fitTo && plan.total > songSec + 1 ? ` The slides run ${Math.round(plan.total)} s but the song is ${Math.round(songSec)} s; choose “Stretch to the song length” to fit them.` : '';
-  toast(`Imported ${slides.length} slides (${plan.pages} text pages, ${Math.round(plan.total)} s).${note}`, note ? 7000 : 4000);
-  return id;
+  if (scriptId) kids.push(scriptId);
+
+  // ---- the master ----
+  const mid = uniqueId(`slideshow_${slug(name)}`, takenIds());
+  const deck = { ...DECK_DEFAULTS, name, animate, scriptHead: plan.head, script: scriptId, slides: slidesModel, fade: 0.4, trans: 'fade', ...timing };
+  const noText = !slidesModel.some((x) => x.pages.length);
+  if (!timing.mode) deck.mode = noText && songSec ? 'even' : 'reading';
+  const master = { id: mid, type: 'deck', name: `${name} (slideshow)`, deck };
+  await pushLayers([master], 'Import slideshow', false);
+  for (const k of kids) { const d = layerById(k); if (d) d.group = mid; }
+  gatherDeck(mid);
+  await syncAssets();
+  const sp = applyDeck(mid, 'Import slides');
+  select(mid);
+  const note = state.bridge && !timing.end && deck.mode !== 'even' && deck.mode !== 'weighted' && sp.total > songSec + 1 ? ` The slides run ${Math.round(sp.total)} s but the song is ${Math.round(songSec)} s; set the timing to “Even across the window” in the Inspector to fit them.` : '';
+  toast(`Imported ${slides.length} slides into a Slideshow folder (${Math.round(sp.total - sp.start)} s).${note}`, note ? 7000 : 4000);
+  return mid;
+}
+
+// ---------- slideshow folders ----------
+
+export const deckChildren = (id) => state.project.elements.filter((e) => e.group === id);
+
+/** Keep a folder's layers together in the stack: children in their current order, the master on top of them. */
+export function gatherDeck(id) {
+  const p = state.project; const m = layerById(id); if (!m) return;
+  const kids = p.elements.filter((e) => e.group === id);
+  const at = Math.min(...kids.map((k) => p.elements.indexOf(k)), p.elements.indexOf(m));
+  p.elements = p.elements.filter((e) => e !== m && e.group !== id);
+  p.elements.splice(Math.max(0, Math.min(at, p.elements.length)), 0, ...kids, m);
+  normalize(p);
+}
+
+/** Rebuild every child of a slideshow (visibility, transitions, chart reveals, script timestamps) from its deck model. */
+export function applyDeck(id, label = 'Retime slideshow') {
+  const m = layerById(id); if (!m?.deck) return null;
+  const deck = deckSettings(m.deck);
+  const songSec = state.bridge ? totalFrames() / fps() : 0;
+  const sp = deckSpans(deck, { songSec });
+  const F = fps(); const f = (x) => Math.max(0, Math.round(x * F));
+  const total = Math.max(totalFrames(), f(sp.total + 2));
+  const off = !!deck.off;
+  const anim = deck.animate !== false;
+  const artUse = new Map(); const objs = [];
+  deck.slides.forEach((s, i) => {
+    if (s.art && layerById(s.art)) { if (!artUse.has(s.art)) artUse.set(s.art, []); artUse.get(s.art).push(i); }
+    (s.objects ?? []).forEach((o, k) => { if (layerById(o)) objs.push({ id: o, i, k }); });
+  });
+  const mine = new Set([...artUse.keys(), ...objs.map((o) => o.id)]);
+  const props = new Set(['visible', 'opacity', 'scale', 'positionX', 'positionY', 'intensity']);
+  state.project.tracks = state.project.tracks.filter((t) => !(mine.has(t.element) && props.has(t.property)));
+  const setBase = (lid, visible) => { const d = layerById(lid); if (!d) return; d.base = { ...(d.base ?? {}) }; if (visible) delete d.base.visible; else d.base.visible = 0; };
+  const setVis = (lid, spans) => {
+    const useful = !off && spans.length;
+    if (useful) { TL.setVisibilitySpans(state.project, lid, spans.map(([a, b]) => [f(a), f(b)]), total); setBase(lid, true); }
+    else { state.project.tracks = state.project.tracks.filter((t) => !(t.element === lid && t.property === 'visible')); setBase(lid, false); }
+  };
+  const push = (lid, property, keys) => state.project.tracks.push({ element: lid, property, mode: 'override', mix: 0.5, keys: keys.map((k) => ({ f: f(k.t), v: k.v, interp: 'linear' })) });
+  for (const [lid, idxs] of artUse) {
+    const live = idxs.filter((i) => sp.slides[i]);
+    const first = deck.slides[live[0] ?? idxs[0]];
+    const solid = idxs.every((i) => deck.slides[i].solid);
+    const trans = !anim || solid ? 'cut' : (first?.trans ?? deck.trans);
+    const mo = artMotion(live.map((i) => [sp.slides[i].t0, sp.slides[i].t1]), trans, deck.fade);
+    setVis(lid, mo.visible);
+    for (const [prop, keys] of Object.entries(mo.tracks)) push(lid, prop, keys);
+  }
+  for (const o of objs) {
+    const s = deck.slides[o.i]; const w = sp.slides[o.i];
+    if (!w) { setVis(o.id, []); continue; }
+    setVis(o.id, [[w.t0, w.t1 + 0.3]]);
+    push(o.id, 'intensity', objectMotion(w.t0, o.k, anim ? (s.trans ?? deck.trans) : 'cut', anim));
+  }
+  const sc = deck.script && layerById(deck.script);
+  if (sc?.script) { sc.script.text = buildDeckScript(deck, sp); setBase(sc.id, !off); }
+  if (!state.bridge) state.project.lengthSec = Math.max(state.project.lengthSec ?? 0, Math.ceil(sp.total + 1));
+  structural(); commit(label, `deck:${id}`);
+  return sp;
+}
+
+export function setDeck(id, patch, label = 'Edit slideshow') {
+  const m = layerById(id); if (!m?.deck) return;
+  Object.assign(m.deck, patch); return applyDeck(id, label);
+}
+export function setDeckSlide(id, i, patch, label = 'Edit slide') {
+  const m = layerById(id); const s = m?.deck?.slides[i]; if (!s) return;
+  Object.assign(s, patch); return applyDeck(id, label);
+}
+export function toggleFolder(id) { const m = layerById(id); if (m) { m.collapsed = !m.collapsed; emit('project'); } }
+export const deckTiming = (id) => { const m = layerById(id); return m?.deck ? deckSpans(m.deck, { songSec: state.bridge ? totalFrames() / fps() : 0 }) : null; };
+
+/** A slideshow from plain images: the same folder, timing and transitions, no PowerPoint involved. */
+export async function importImagesAsDeck(files, { name = 'Slideshow', timing = {}, animate = true } = {}) {
+  const imgs = [...files].filter((f) => /^image\//.test(f.type) || /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(f.name)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  if (!imgs.length) { toast('Pick at least one image.', 3500); return null; }
+  const taken = takenIds(); const defs = []; const slidesModel = [];
+  for (const f of imgs) {
+    const lid = uniqueId(slug(f.name), taken); taken.add(lid);
+    state.files.set(f.name, f);
+    defs.push({ id: lid, type: 'static', path: f.name, fit: 'cover', name: slug(f.name) });
+    slidesModel.push({ title: f.name.replace(/\.[^.]+$/, ''), hidden: false, pages: [], dur: null, trans: null, art: lid, objects: [], solid: false });
+  }
+  await pushLayers(defs, 'Add slideshow images', false);
+  const songSec = state.bridge ? totalFrames() / fps() : 0;
+  const mid = uniqueId(`slideshow_${slug(name)}`, takenIds());
+  const deck = { ...DECK_DEFAULTS, name, animate, scriptHead: '@pack editorial', script: null, slides: slidesModel, mode: songSec ? 'even' : 'fixed', ...timing };
+  await pushLayers([{ id: mid, type: 'deck', name: `${name} (slideshow)`, deck }], 'Add slideshow', false);
+  for (const d of defs) layerById(d.id).group = mid;
+  gatherDeck(mid); await syncAssets();
+  const sp = applyDeck(mid, 'Add slideshow');
+  select(mid);
+  toast(`Slideshow of ${imgs.length} image${imgs.length === 1 ? '' : 's'} (${Math.round(sp.total - sp.start)} s).`, 3500);
+  return mid;
 }

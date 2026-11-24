@@ -103,7 +103,25 @@ export function createTimelinePanel(shell) {
     return r;
   }
 
+  function deckRow(def) {
+    const isSel = state.selected === def.id;
+    const sp = core.deckTiming(def.id);
+    const label = h('div.tl-label', { class: isSel ? 'sel' : '', onclick: () => core.select(def.id) },
+      h('button.icon-btn.sm.twirl', { type: 'button', 'aria-expanded': String(!def.collapsed), 'aria-label': def.collapsed ? 'Open folder' : 'Close folder', title: def.collapsed ? 'Show the slides inside' : 'Hide the slides inside',
+        onclick: (e) => { e.stopPropagation(); core.toggleFolder(def.id); } }, icon(def.collapsed ? 'expand_more' : 'expand_less')),
+      icon('folder_open', 'kind'), h('span.tl-name', layerName(def)));
+    const tr = h('div.tl-track', { class: `${isSel ? 'sel' : ''} deck`, style: { width: `${width()}px` }, dataset: { role: 'track', id: def.id } });
+    sp?.slides.forEach((s, i) => {
+      if (!s) return;
+      const sl = def.deck.slides[i]; const a = s.t0 * fps(); const b = s.t1 * fps();
+      tr.append(h('div.deck-seg', { class: def.deck.off ? 'off' : '', style: { left: `${xOf(a)}px`, width: `${Math.max(3, xOf(b - a) - 1)}px` }, title: `Slide ${i + 1}${sl.title ? `: ${sl.title}` : ''} · ${(s.t1 - s.t0).toFixed(1)} s`,
+        dataset: { role: 'deckseg', id: def.id, i: String(i) }, onclick: (e) => { e.stopPropagation(); core.select(def.id); shell.deckSlide = i; core.emit?.('project'); } }, h('span', String(i + 1))));
+    });
+    return [h('div.tl-row.deck-row', { class: isSel ? 'sel' : '', dataset: { layer: def.id } }, label, tr)];
+  }
+
   function layerRow(def) {
+    if (def.type === 'deck') return deckRow(def);
     const idx = core.layerIndex(def.id);
     const isSel = state.selected === def.id;
     const open = expanded.has(def.id);
@@ -171,7 +189,8 @@ export function createTimelinePanel(shell) {
     content.style.setProperty('--label-w', `${labelW}px`);
     content.append(ruler());
     const layers = [...state.project.elements].reverse();
-    for (const def of layers) for (const r of layerRow(def)) content.append(r);
+    const closed = new Set(layers.filter((d) => d.type === 'deck' && d.collapsed).map((d) => d.id));
+    for (const def of layers) { if (def.group && closed.has(def.group)) continue; for (const r of layerRow(def)) { if (def.group) r.classList?.add('in-folder'); content.append(r); } }
     if (!layers.length) content.append(h('div.empty-note', h('p', 'Add layers to see them here.')));
     content.append(playhead);
     placePlayhead();

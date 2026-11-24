@@ -177,7 +177,7 @@ export function defaultFit(def) {
 
 /** Layer kinds. Image-like layers have textures from files; generated layers are drawn procedurally. */
 export const IMAGE_TYPES = ['static', 'spriteSheet', 'gif', 'frameSequence'];
-export const GENERATED_TYPES = ['visualizer', 'effect', 'lyrics', 'script', 'shape', 'chart', 'table'];
+export const GENERATED_TYPES = ['visualizer', 'effect', 'lyrics', 'script', 'shape', 'chart', 'table', 'deck'];
 export const isImageType = (t) => IMAGE_TYPES.includes(t);
 export const isGeneratedType = (t) => GENERATED_TYPES.includes(t);
 
@@ -201,6 +201,7 @@ export function buildPlan(assets, frameView, frameIndex, videoFps) {
     const a = assets[ei];
     if (!a || !a.ready) continue;
     const def = a.def;
+    if (def.type === 'deck') continue; // a folder: it owns timing, it draws nothing
 
     // Routed values, read as a view (no copy).
     if (frameView.get(ei, P.visible) < 0.5) continue; // culled: hidden by keyframe or base

@@ -50,7 +50,7 @@ export function createLayersPanel(shell) {
   const head = h('div.panel-toolbar', addBtn, h('span.grow'), upBtn, downBtn, dupBtn, delBtn);
   const element = h('div.panel-layers', head, list);
 
-  const nudgeOrder = (d) => { if (state.selected) core.reorderLayer(state.selected, core.layerIndex(state.selected) + d); };
+  const nudgeOrder = (d) => { if (state.selected && core.layerById(state.selected)?.group) { core.toast('This layer belongs to a slideshow folder. Move the folder instead.', 3000); return; } if (state.selected) core.reorderLayer(state.selected, core.layerIndex(state.selected) + d); };
 
   const render = () => {
     clear(list);
@@ -62,31 +62,44 @@ export function createLayersPanel(shell) {
       return;
     }
     const n = els.length;
+    const isMaster = (e) => e.type === 'deck';
+    const hasMaster = (e) => e.group && els.some((m) => m.id === e.group && isMaster(m));
+    const order = [];
     for (let d = 0; d < n; d++) {
-      const i = n - 1 - d;
-      const def = els[i];
+      const def = els[n - 1 - d];
+      if (hasMaster(def)) continue;                       // shown under its folder
+      order.push([def, false]);
+      if (isMaster(def) && !def.collapsed) for (let k = n - 1; k >= 0; k--) if (els[k].group === def.id) order.push([els[k], true]);
+    }
+    for (const [def, child] of order) {
+      const i = els.indexOf(def);
       const hasVisTrack = !!core.trackOf(def.id, 'visible');
       const visible = (def.base?.visible ?? 1) >= 0.5;
       const conns = core.connectionsFor(def.id).filter((c) => !c.muted).length;
       const keys = state.project.tracks.filter((t) => t.element === def.id && t.property !== 'visible').length;
+      const folder = isMaster(def);
+      const nSlides = folder ? def.deck.slides.length : 0;
+      const deckOff = folder && !!def.deck.off;
       const row = h('div.layer-row', {
         role: 'option', 'aria-selected': String(state.selected === def.id), tabIndex: 0,
-        class: `${state.selected === def.id ? 'selected' : ''} ${visible || hasVisTrack ? '' : 'off'}`,
+        class: `${state.selected === def.id ? 'selected' : ''} ${(folder ? !deckOff : visible || hasVisTrack) ? '' : 'off'} ${child ? 'child' : ''} ${folder ? 'folder' : ''}`,
         dataset: { id: def.id },
         onclick: () => core.select(def.id),
         onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); core.select(def.id); } },
         oncontextmenu: (e) => { e.preventDefault(); core.select(def.id); shell.showLayerMenu({ x: e.clientX, y: e.clientY }, def.id); },
       },
-      h('span.handle', { title: 'Drag to reorder', onpointerdown: (e) => startDrag(e, def.id) }, icon('drag_indicator')),
+      child ? h('span.handle.none') : h('span.handle', { title: folder ? 'Drag the whole folder' : 'Drag to reorder', onpointerdown: (e) => startDrag(e, def.id) }, icon('drag_indicator')),
+      folder ? h('button.icon-btn.sm.twirl', { type: 'button', 'aria-expanded': String(!def.collapsed), 'aria-label': def.collapsed ? 'Open folder' : 'Close folder', title: def.collapsed ? 'Show the slides inside' : 'Hide the slides inside',
+        onclick: (e) => { e.stopPropagation(); core.toggleFolder(def.id); } }, icon(def.collapsed ? 'chevron_right' : 'expand_more')) : null,
       thumb(def, state.assets[i]),
-      h('span.lname', h('span.lname-text', layerName(def)), h('span.lsub', LAYER_TYPE_INFO[def.type]?.label ?? def.type)),
+      h('span.lname', h('span.lname-text', layerName(def)), h('span.lsub', folder ? `Slideshow · ${nSlides} slide${nSlides === 1 ? '' : 's'}${deckOff ? ' · hidden' : ''}` : (LAYER_TYPE_INFO[def.type]?.label ?? def.type))),
       def._error ? h('span.badge.err', { title: def._error }, icon('close')) : null,
       conns ? h('span.badge', { title: `${conns} sound connection${conns > 1 ? 's' : ''}` }, icon('graphic_eq'), conns) : null,
       keys ? h('span.badge', { title: `${keys} keyframed propert${keys > 1 ? 'ies' : 'y'}` }, icon('diamond'), keys) : null,
       h('button.icon-btn.sm', {
-        type: 'button', title: hasVisTrack ? 'Visibility is keyframed (edit it in the timeline)' : 'Show / hide', 'aria-label': 'Toggle visibility', disabled: hasVisTrack,
-        onclick: (e) => { e.stopPropagation(); core.setProperty(def.id, 'visible', visible ? 0 : 1, visible ? 'Hide layer' : 'Show layer'); },
-      }, icon(visible || hasVisTrack ? 'visibility' : 'visibility_off')),
+        type: 'button', title: folder ? (deckOff ? 'Show the whole slideshow' : 'Hide the whole slideshow') : hasVisTrack ? 'Timed by its slideshow (change it in the slideshow’s Inspector)' : 'Show / hide', 'aria-label': 'Toggle visibility', disabled: !folder && hasVisTrack,
+        onclick: (e) => { e.stopPropagation(); if (folder) core.setDeck(def.id, { off: !deckOff }, deckOff ? 'Show slideshow' : 'Hide slideshow'); else core.setProperty(def.id, 'visible', visible ? 0 : 1, visible ? 'Hide layer' : 'Show layer'); },
+      }, icon(folder ? (deckOff ? 'visibility_off' : 'visibility') : visible || hasVisTrack ? 'visibility' : 'visibility_off')),
       h('button.icon-btn.sm', {
         type: 'button', title: def.locked ? 'Unlock' : 'Lock (protect from dragging in the preview)', 'aria-label': 'Toggle lock',
         onclick: (e) => { e.stopPropagation(); core.updateLayer(def.id, { locked: !def.locked }, def.locked ? 'Unlock layer' : 'Lock layer'); },
@@ -123,8 +136,15 @@ export function createLayersPanel(shell) {
       handle.removeEventListener('pointercancel', end);
       line.remove();
       rows[from]?.classList.remove('dragging');
-      const finalDisplayed = target > from ? target - 1 : target;
-      if (finalDisplayed !== from) core.reorderLayer(id, rows.length - 1 - finalDisplayed);
+      // drop above the row that is now at `target`; never inside someone else's folder
+      let k = target;
+      const idOf = (r) => rows[r]?.dataset.id;
+      const grp = (r) => core.layerById(idOf(r))?.group;
+      const own = core.layerById(id);
+      while (k < rows.length && grp(k) && grp(k) !== id && own?.group !== grp(k) && !rows[k].classList.contains('folder')) k++;
+      let ref = k < rows.length ? idOf(k) : null;
+      if (ref === id) ref = idOf(k + 1) ?? null;
+      core.placeAbove(id, ref);
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', end);
@@ -132,7 +152,7 @@ export function createLayersPanel(shell) {
     move(e);
   }
 
-  const structure = () => JSON.stringify(state.project.elements.map((e) => [e.id, e.name, e.type, e.locked, e.base?.visible, e._error]))
+  const structure = () => JSON.stringify(state.project.elements.map((e) => [e.id, e.name, e.type, e.locked, e.base?.visible, e._error, e.group, e.collapsed, e.deck?.off, e.deck?.slides?.length]))
     + state.project.connections.length + state.project.tracks.map((t) => `${t.element}.${t.property}`).join();
   let last = '';
   const refresh = rafThrottle(() => { const s = structure() + state.selected; if (s !== last) { last = s; render(); } });

@@ -242,10 +242,13 @@ export function parseScript(text) {
   const flush = () => { if (cur && (cur.lines.length || cur.dir.dur != null)) scenes.push(cur); cur = null; };
   const open = () => { cur ??= { lines: [], dir: {}, dirIdx: {}, src: [], t: null }; return cur; };
   let ln = -1;
+  // With explicit "---" separators the scenes are exactly the blocks between them; blank lines are just spacing.
+  // Without any, a blank line ends a scene (the quick way to write an outline).
+  const hasSep = /^\s*-{3,}\s*$/m.test(String(text));
   for (const rawLine of String(text).split(/\r?\n/)) {
     ln++;
     const line = rawLine.trim();
-    if (!line) { flush(); continue; }
+    if (!line) { if (!hasSep) flush(); continue; }
     if (/^-{3,}$/.test(line)) { flush(); continue; }
     let m;
     if ((m = /^@(\w+)\s+(.*)$/.exec(line))) { options[m[1]] = m[2].trim(); continue; }
@@ -349,7 +352,9 @@ function planTiming(script, energy, total) {
   let t = 0;
   for (let i = 0; i < sc.length; i++) {
     if (start[i] == null) start[i] = t;
-    const nextStart = i + 1 < sc.length ? sc[i + 1].t : null;
+    // the next scene that was given a time, wherever it sits in the text
+    let nextStart = null;
+    for (let j = 0; j < sc.length; j++) if (j !== i && sc[j].t != null && sc[j].t > start[i] + 1e-6 && (nextStart == null || sc[j].t < nextStart)) nextStart = sc[j].t;
     if (sc[i].dir.dur == null) {
       if (exEnd[i] != null) { dur[i] = Math.max(0.3, exEnd[i] - start[i]); endX[i] = true; }
       else if (nextStart != null) dur[i] = Math.max(0.5, nextStart - start[i]);
@@ -789,24 +794,35 @@ export function compileScript(script, ctx) {
     // character-level reveal for short title runs when the scene asks for it (typewriter)
     const decor = (lay.decor ?? []).map((dc) => ({ ...dc, t0: dc.li != null ? lineT[dc.li] : t0 + lead, spring }));
     const bgKind = bgMode === 'none' ? 'none' : bgMode === 'solid' ? 'solid' : (sc.dir.bgstyle ?? pick(SP.bgs, rnd(seed, 'bg', i)));
+    // Every scene owns its own exit: its text fades over `outD` seconds and stays on screen while that happens, even if the
+    // next scene has already started. `::out 0.6` sets the length, `::out cut` removes the fade. An explicit end time means
+    // "fully gone by then", otherwise the fade starts when the scene's time is up.
+    const od = String(sc.dir.out ?? '').trim().toLowerCase();
+    const outD = od === 'cut' || od === 'none' ? 0 : Number.isFinite(Number(od)) && od !== '' ? clamp(Number(od), 0, 4) : 0.35;
+    const gone = endX[i] ? t0 + d : t0 + d + outD;
     scenes.push({ i, t0, t1: t0 + d, dur: d, layout: used, pal, bgKind, runs, decor, inType, emphStyle, spring,
-      idle: SP.idle, pulse: SP.pulse, drift: SP.drift, pack: styleName, trans: null, lineT, fadeOut: endX[i], reveal });
+      idle: SP.idle, pulse: SP.pulse, drift: SP.drift, pack: styleName, trans: null, enter: null, next: -1, lineT, outD, gone, reveal });
   });
 
   // transitions between scenes
-  for (let i = 0; i < scenes.length - 1; i++) {
-    const a = scenes[i]; const SP = PACKS[scenes[i + 1].pack];
-    const forced = script.scenes[i + 1].dir.trans;
+  // (paired by time, so the order of the blocks in the text does not matter)
+  const byTime = scenes.map((_, i) => i).sort((x, y) => scenes[x].t0 - scenes[y].t0 || x - y);
+  for (let k = 0; k < byTime.length - 1; k++) {
+    const i = byTime[k]; const j = byTime[k + 1];
+    const a = scenes[i]; const SP = PACKS[scenes[j].pack];
+    const forced = script.scenes[j].dir.trans;
     let type = TRANSITION_IDS.includes(forced) ? forced : null;
     if (!type) {
       const ents = SP.transitions.map((n) => [n, (n === 'cut' || n === 'slices' ? 0.5 + energy : n === 'fade' || n === 'cover' ? 1.5 - energy : 1) * (0.8 + 0.4 * rnd(seed, 'tr', i, n))]);
       type = pickWeighted(ents, rnd(seed, 'trp', i));
-      if (i > 0 && scenes[i - 1].trans?.type === type) type = pickWeighted(ents.filter(([n]) => n !== type), rnd(seed, 'trq', i));
+      const before = k > 0 ? scenes[byTime[k - 1]] : null;
+      if (before?.trans?.type === type) type = pickWeighted(ents.filter(([n]) => n !== type), rnd(seed, 'trq', i));
     }
     const dirs = ['left', 'right', 'up', 'down'];
     a.trans = { type, d: type === 'cut' ? 0.02 : SP.transDur * (1.35 - 0.7 * energy), dir: dirs[Math.floor(rnd(seed, 'dir', i) * 4)] };
+    a.next = j; scenes[j].enter = a.trans;
   }
-  const total = scenes.length ? scenes.at(-1).t1 : 0;
+  const total = scenes.length ? Math.max(...scenes.map((s) => s.t1)) : 0;
   return { W, H, packName, energy, seed, scenes, total, fonts, shadow: clamp(Number(ctx.shadow) || 0, 0, 1), bgMode };
 }
 
@@ -941,7 +957,8 @@ function sceneRuns(sc, t, W, H, pulse) {
 function drawScene(sc, t, W, H, pulse, tf) {
   const geo = sceneGeometry(sc, t, W, H, pulse);
   const { runs, bars } = sceneRuns(sc, t, W, H, pulse);
-  for (const b of bars) pushRect(geo, b.x, b.y, b.w, b.h, b.rot, b.c, 0.95);
+  const fade = tf.fade ?? 1;
+  for (const b of bars) pushRect(geo, b.x, b.y, b.w, b.h, b.rot, b.c, 0.95 * (tf.pair ? fade : 1));
   // drift (slow camera) then the pass transform, applied to every point
   const u = clamp((t - sc.t0) / Math.max(0.1, sc.dur), 0, 1);
   const ds = 1 + sc.drift * u; const dpx = (rnd('dx', sc.i) - 0.5) * W * sc.drift * u; const dpy = (rnd('dy', sc.i) - 0.5) * H * sc.drift * u;
@@ -954,29 +971,31 @@ function drawScene(sc, t, W, H, pulse, tf) {
   };
   for (let i = 0; i < geo.pos.length; i += 2) { const [x, y] = map(geo.pos[i], geo.pos[i + 1]); geo.pos[i] = x; geo.pos[i + 1] = y; }
   // backgrounds should always cover the screen: grow them a little when the camera drifts
-  const rr = runs.map((r) => { const [x, y] = map(r.x, r.y); return { ...r, x, y, size: r.size * S, rot: r.rot + (tf.rot ?? 0), alpha: r.alpha * (tf.alpha ?? 1) }; });
-  const col = geo.col; if (tf.alpha != null && tf.alpha < 1) for (let i = 3; i < col.length; i += 4) col[i] *= tf.alpha;
+  const rr = runs.map((r) => { const [x, y] = map(r.x, r.y); return { ...r, x, y, size: r.size * S, rot: r.rot + (tf.rot ?? 0), alpha: r.alpha * (tf.alpha ?? 1) * fade }; });
+  const ga = (tf.alpha ?? 1) * (tf.bgAlpha ?? 1) * (tf.pair ? 1 : fade);
+  const col = geo.col; if (ga < 1) for (let i = 3; i < col.length; i += 4) col[i] *= ga;
   return { geo: { pos: new Float32Array(geo.pos), col: new Float32Array(geo.col), n: geo.pos.length / 2 }, runs: rr, scissors: tf.scissors ?? null };
 }
 
-/** Scenes visible at time t and the transform that applies to each. */
+/**
+ * Scenes visible at time t, each with its own role. A scene is alive from just before its start (its entrance transition)
+ * until it has finished fading out, no matter what other scenes are doing, so text never vanishes because another scene began.
+ * While the NEXT scene (by time) is entering, this one takes the "out" half of that same transition.
+ */
 function sceneStack(c, t) {
-  const S = c.scenes; if (!S.length) return [];
-  let i = 0;
-  while (i + 1 < S.length && t >= S[i].t1) i++;
-  const a = S[i];
-  // a transition into scene i happens in [t0 - d/2, t0 + d/2]
-  const prev = i > 0 ? S[i - 1] : null;
-  if (prev?.trans && prev.t1 >= a.t0 - prev.trans.d / 2 - 1e-6) {
-    const d = prev.trans.d; const p = (t - (a.t0 - d / 2)) / d;
-    if (p > 0 && p < 1) return [{ sc: prev, role: 'out', p, trans: prev.trans }, { sc: a, role: 'in', p, trans: prev.trans }];
+  const S = c.scenes; const out = [];
+  for (const sc of S) {
+    const en = sc.enter; const lo = en ? sc.t0 - en.d / 2 : sc.t0;
+    if (t < lo - 1e-9 || t >= sc.gone) continue;
+    const nx = sc.next >= 0 ? S[sc.next] : null;
+    if (nx && sc.trans) {
+      const d = sc.trans.d; const p = (t - (nx.t0 - d / 2)) / d;
+      if (p > 0 && p < 1) { out.push({ sc, role: 'out', p, trans: sc.trans, pair: true }); continue; }
+    }
+    if (en) { const p = (t - lo) / en.d; if (p < 1) { out.push({ sc, role: 'in', p: Math.max(0, p), trans: en, pair: S.some((o) => o.next === sc.i && t < o.gone) }); continue; } }
+    out.push({ sc, role: 'solo', p: 1 });
   }
-  const nxt = S[i + 1];
-  if (nxt && a.trans && a.t1 >= nxt.t0 - a.trans.d / 2 - 1e-6) {
-    const d = a.trans.d; const p = (t - (nxt.t0 - d / 2)) / d;
-    if (p > 0 && p < 1) return [{ sc: a, role: 'out', p, trans: a.trans }, { sc: nxt, role: 'in', p, trans: a.trans }];
-  }
-  return [{ sc: a, role: 'solo', p: 1 }];
+  return out.sort((x, y) => x.sc.t0 - y.sc.t0 || x.sc.i - y.sc.i);
 }
 
 const DIR = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] };
@@ -986,7 +1005,7 @@ function transformsFor(entry, W, H) {
   const e = easeInOut(clamp(entry.p, 0, 1)); const { type, dir } = entry.trans; const [dx, dy] = DIR[dir];
   const out = entry.role === 'out';
   switch (type) {
-    case 'cut': return out ? (e < 0.5 ? {} : { alpha: 0 }) : (e < 0.5 ? { alpha: 0 } : {});
+    case 'cut': return out ? (e < 0.5 ? {} : { bgAlpha: 0 }) : (e < 0.5 ? { alpha: 0 } : {});
     case 'fade': return out ? {} : { alpha: e };
     case 'push': return out ? { tx: -dx * W * e, ty: -dy * H * e } : { tx: dx * W * (1 - e), ty: dy * H * (1 - e) };
     case 'cover': return out ? { scale: 1 - 0.06 * e, alpha: 1 - 0.35 * e } : { tx: dx * W * (1 - e), ty: dy * H * (1 - e) };
@@ -1020,7 +1039,10 @@ export function frameAt(c, t, { pulse = 0 } = {}) {
   const passes = [];
   for (const entry of sceneStack(c, t)) {
     const tf = transformsFor(entry, c.W, c.H);
-    if (entry.sc.fadeOut) { const k = clamp((entry.sc.t1 - t) / 0.3, 0, 1); if (k < 1) tf.alpha = (tf.alpha ?? 1) * k; }
+    const sc = entry.sc;
+    // the scene's own fade-out: text (and its bars) always; the backdrop only when nothing is taking over behind it
+    tf.fade = sc.outD > 0 ? clamp((sc.gone - t) / sc.outD, 0, 1) : 1;
+    tf.pair = !!entry.pair;
     const d = drawScene(entry.sc, t, c.W, c.H, pulse, tf);
     if (c.shadow) for (const r of d.runs) r.shadow = c.shadow;
     passes.push(d);

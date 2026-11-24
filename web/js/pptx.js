@@ -557,10 +557,10 @@ export function planSlides(parsed, { W = 1280, H = 720, perSlide = 0, fitTo = 0,
   if (fitTo > 0) { const tot = plans.reduce((a, p) => a + p.dur, 0); if (tot > 0) k = fitTo / tot; }
 
   const lines = ['@pack editorial', ''];
-  const spans = []; let pagesN = 0;
+  const spans = []; let pagesN = 0; const deckSlides = [];
   for (const p of plans) {
-    if (p.skip) { spans.push(null); continue; }
-    const s0 = t;
+    if (p.skip) { spans.push(null); deckSlides.push({ hidden: true, pages: [] }); continue; }
+    const s0 = t; const dpages = [];
     p.pageSets.forEach((ps, pi) => {
       const d = p.durs[pi] * k;
       if (ps.shown.length) {
@@ -581,6 +581,7 @@ export function planSlides(parsed, { W = 1280, H = 720, perSlide = 0, fitTo = 0,
         if (sec.length) {
           const nw = ps.words;
           const head = ['---', '::trans fade', '::emph none', '::layout center', `::reveal ${nw > 14 ? 'line' : 'word'}`];
+          dpages.push({ w: p.durs[pi], head: [...head.slice(1)], lines: [...sec] });
           sec[0] = `[${fmtT(t)}-${fmtT(t + Math.max(0.5, d - 0.05))}] ${sec[0]}`;
           lines.push(...head, ...sec, '');
           pagesN++;
@@ -589,9 +590,10 @@ export function planSlides(parsed, { W = 1280, H = 720, perSlide = 0, fitTo = 0,
       t += d;
     });
     spans.push({ t0: s0, t1: t });
+    deckSlides.push({ title: plainT(p.slide?.title ?? ''), hidden: false, pages: dpages });
   }
   const text = lines.join('\n').replace(/^---\n/m, '').trimEnd();
-  return { text, spans, total: t, pages: pagesN };
+  return { text, spans, total: t, pages: pagesN, deckSlides, head: '@pack editorial' };
 }
 
 /**
@@ -599,7 +601,7 @@ export function planSlides(parsed, { W = 1280, H = 720, perSlide = 0, fitTo = 0,
  * bullets stay bullets, and a wordy slide is split into pages of at most ~38 words so the text stays big.
  */
 export function planSlidesAuto(parsed, { perSlide = 0, fitTo = 0 } = {}) {
-  const lines = ['@pack punchy', '']; const spans = []; let t = 0; let pagesN = 0;
+  const lines = ['@pack punchy', '']; const spans = []; let t = 0; let pagesN = 0; const deckSlides = [];
   const plans = parsed.slides.map((slide) => {
     if (slide.hidden) return null;
     const title = slide.blocks.find((b) => b.kind === 'title');
@@ -613,18 +615,19 @@ export function planSlidesAuto(parsed, { perSlide = 0, fitTo = 0 } = {}) {
   let k = 1;
   if (fitTo > 0) { const tot = plans.reduce((a, p) => a + (p ? p.durs.reduce((x, y) => x + y, 0) : 0), 0); if (tot) k = fitTo / tot; }
   for (const p of plans) {
-    if (!p) { spans.push(null); continue; }
-    const s0 = t;
+    if (!p) { spans.push(null); deckSlides.push({ hidden: true, pages: [] }); continue; }
+    const s0 = t; const dpages = [];
     let durs = p.durs; if (perSlide > 0) { const tot = durs.reduce((a, b) => a + b, 0); durs = durs.map((d) => (d / tot) * perSlide); }
     p.pages.forEach((pg, i) => {
       const d = durs[i] * k; const body = [];
       if (p.head) body.push(i === 0 || p.pages.length > 1 ? `# ${p.head}` : '');
       for (const q of pg) body.push(q.sub ? q.text : (q.bullet ? `- ${q.text}` : q.text));
       const real = body.filter(Boolean);
-      if (real.length) { real[0] = `[${fmtT(t)}-${fmtT(t + Math.max(0.5, d - 0.05))}] ${real[0]}`; lines.push('---', ...real, ''); pagesN++; }
+      if (real.length) { dpages.push({ w: p.durs[i], head: [], lines: [...real] }); real[0] = `[${fmtT(t)}-${fmtT(t + Math.max(0.5, d - 0.05))}] ${real[0]}`; lines.push('---', ...real, ''); pagesN++; }
       t += d;
     });
     spans.push({ t0: s0, t1: t });
+    deckSlides.push({ title: p.head, hidden: false, pages: dpages });
   }
-  return { text: lines.join('\n').replace(/^---\n/m, '').trimEnd(), spans, total: t, pages: pagesN };
+  return { text: lines.join('\n').replace(/^---\n/m, '').trimEnd(), spans, total: t, pages: pagesN, deckSlides, head: '@pack punchy' };
 }

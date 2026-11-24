@@ -81,7 +81,7 @@ test('layout variety', () => {
 
 test('time tag with end sets scene length and fade-out', () => {
   const c = mk('[0:02.0-0:04.5] hello there\n\n[0:08] next line', { bgMode: 'none' });
-  assert.equal(c.scenes[0].t0, 2); assert.equal(c.scenes[0].dur, 2.5); assert.equal(c.scenes[0].fadeOut, true);
+  assert.equal(c.scenes[0].t0, 2); assert.equal(c.scenes[0].dur, 2.5); assert.equal(c.scenes[0].gone, 4.5);
   assert.equal(c.scenes[1].t0, 8);
   const f = frameAt(c, 6, {}); // in the gap: nothing visible
   assert.ok(f.passes.every((p) => p.runs.length === 0));
@@ -169,4 +169,52 @@ test('lines sharing an {at} form one block; rect regions, align, max, role, colo
   assert.equal(R('first').color, '#ff0000');
   assert.ok(R('first').size <= 720 * 0.06 + 1);
   assert.ok(R('elsewhere').x > 1280 * 0.6 && R('elsewhere').y > 720 * 0.7);
+});
+
+const alphas = (c, t) => frameAt(c, t, {}).passes.flatMap((p) => p.runs.map((r) => r.alpha));
+const maxA = (c, t) => Math.max(0, ...alphas(c, t));
+
+test('text of a finished scene keeps fading while the next scene starts (no pop)', () => {
+  const c = mk('[0:02] first line here\n---\n[0:06] second line here', { bgMode: 'none' });
+  const s0 = c.scenes[0];
+  assert.ok(s0.gone > s0.t1, 'a scene without an explicit end fades after its time is up');
+  const mid = s0.t1 + s0.outD / 2;
+  const f = frameAt(c, mid, {});
+  const old = f.passes.flatMap((p) => p.runs).filter((r) => r.text.toLowerCase() === 'first');
+  assert.ok(old.length && old[0].alpha > 0.05 && old[0].alpha < 0.95, `fading, alpha ${old[0]?.alpha}`);
+  assert.equal(alphas(c, s0.gone + 0.01).filter((a) => a > 0).length > 0, true);
+});
+test('a fade transition does not leave the old text at full strength until it pops', () => {
+  const c = mk('::trans fade\n[0:02] aaa bbb\n---\n::trans fade\n[0:05] ccc ddd', { bgMode: 'none' });
+  const a = c.scenes[0];
+  let prev = 1;
+  for (let t = a.t1 - 0.05; t < a.gone; t += 0.02) {
+    const v = frameAt(c, t, {}).passes.flatMap((p) => p.runs).filter((r) => r.text.toLowerCase() === 'aaa').map((r) => r.alpha)[0] ?? 0;
+    assert.ok(v <= prev + 1e-6, `alpha never jumps up (${v} after ${prev} at ${t})`);
+    assert.ok(prev - v < 0.35, `no sudden drop (${prev} -> ${v} at ${t.toFixed(2)})`);
+    prev = v;
+  }
+});
+test('::out sets the fade length and ::out cut removes it', () => {
+  const slow = mk('::out 1.2\n[0:02-0:03] hello', { bgMode: 'none' });
+  assert.equal(slow.scenes[0].outD, 1.2);
+  const cut = mk('::out cut\n[0:02] hello\n---\n[0:05] bye', { bgMode: 'none' });
+  assert.equal(cut.scenes[0].outD, 0);
+  assert.equal(cut.scenes[0].gone, cut.scenes[0].t1);
+});
+test('scenes are self-contained: block order in the text does not change timing or transitions', () => {
+  const a = mk('[0:10] late scene\n---\n[0:02] early scene', { bgMode: 'none' });
+  assert.equal(a.scenes[0].t0, 10); assert.equal(a.scenes[1].t0, 2);
+  assert.equal(a.scenes[1].dur, 8, 'the early scene runs until the next timed scene, wherever it is written');
+  assert.equal(a.scenes[1].next, 0); assert.equal(a.scenes[0].enter, a.scenes[1].trans);
+  assert.ok(maxA(a, 3) > 0 && maxA(a, 11) > 0);
+});
+test('blank lines are plain spacing once --- is used; without it they split scenes', () => {
+  assert.equal(parseScript('# a\nline\n\nmore\n---\n# b\nx').scenes.length, 2);
+  assert.equal(parseScript('# a\nline\n\nmore').scenes.length, 2);
+  assert.equal(parseScript('[0:01] one\n\n[0:03] two').scenes.length, 2);
+});
+test('nothing is drawn before the first scene starts', () => {
+  const c = mk('[0:05] hi there', { bgMode: 'scenes' });
+  assert.equal(frameAt(c, 1, {}).passes.length, 0);
 });
