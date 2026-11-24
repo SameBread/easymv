@@ -16,7 +16,7 @@ import { parseLrc } from '../../lyrics.js';
 const TABS = [['write', 'Write', 'edit'], ['timing', 'Timing', 'timeline'], ['look', 'Look', 'palette'], ['scenes', 'Scenes', 'slideshow']];
 const MODE_HELP = {
   presentation: 'Full-screen scenes, each with its own animated background. Good for explainers and slides.',
-  lyrics: 'Transparent: it sits on top of your background layers. Words appear one by one in the lower third.',
+  lyrics: 'Transparent: it sits on top of your background layers. Words appear one by one, anywhere on the screen.',
 };
 
 export function createScriptPanel(shell) {

@@ -254,14 +254,17 @@ export function parseScript(text) {
   const flush = () => { if (cur && (cur.lines.length || cur.dir.dur != null)) scenes.push(cur); cur = null; };
   const open = () => { cur ??= { lines: [], dir: {}, dirIdx: {}, src: [], t: null }; return cur; };
   let ln = -1;
-  // With explicit "---" separators the scenes are exactly the blocks between them; blank lines are just spacing.
-  // Without any, a blank line ends a scene (the quick way to write an outline).
-  const hasSep = /^\s*-{3,}\s*$/m.test(String(text));
+  // Scene separators: a blank line or --- always starts a new scene. A line holding just +++ cancels the blank line
+  // next to it, so a long stanza can have spacing and still be one scene.
+  let pendingBreak = false; let keepGoing = false;
   for (const rawLine of String(text).split(/\r?\n/)) {
     ln++;
     const line = rawLine.trim();
-    if (!line) { if (!hasSep) flush(); continue; }
-    if (/^-{3,}$/.test(line)) { flush(); continue; }
+    if (!line) { if (!keepGoing) pendingBreak = true; continue; }
+    if (/^\+{3,}$/.test(line)) { pendingBreak = false; keepGoing = true; continue; }
+    if (/^-{3,}$/.test(line)) { flush(); pendingBreak = false; keepGoing = false; continue; }
+    if (pendingBreak) flush();
+    pendingBreak = false; keepGoing = false;
     let m;
     if ((m = /^@(\w+)\s+(.*)$/.exec(line))) { options[m[1]] = m[2].trim(); continue; }
     if ((m = /^::(\w+)\s*(.*)$/.exec(line))) { const o = open(); o.dir[m[1]] = m[2].trim(); o.dirIdx[m[1]] = ln; o.src.push(ln); continue; }

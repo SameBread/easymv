@@ -209,10 +209,31 @@ test('scenes are self-contained: block order in the text does not change timing 
   assert.equal(a.scenes[1].next, 0); assert.equal(a.scenes[0].enter, a.scenes[1].trans);
   assert.ok(maxA(a, 3) > 0 && maxA(a, 11) > 0);
 });
-test('blank lines are plain spacing once --- is used; without it they split scenes', () => {
-  assert.equal(parseScript('# a\nline\n\nmore\n---\n# b\nx').scenes.length, 2);
+test('a blank line or --- always starts a scene, and +++ keeps one going', () => {
+  assert.equal(parseScript('# a\nline\n\nmore\n---\n# b\nx').scenes.length, 3);
   assert.equal(parseScript('# a\nline\n\nmore').scenes.length, 2);
   assert.equal(parseScript('[0:01] one\n\n[0:03] two').scenes.length, 2);
+  assert.equal(parseScript('[0:01] one\n+++\n\n[0:03] two').scenes.length, 1);
+  assert.equal(parseScript('[0:01] one\n\n+++\n[0:03] two').scenes.length, 1);
+  assert.equal(parseScript('[0:01] one\n\n+++\n\n[0:03] two\n\n[0:05] three').scenes.length, 2);
+  assert.equal(parseScript('[0:01] one\n+++\n---\n[0:03] two').scenes.length, 2);
+});
+test('a script mixing blank lines and one --- keeps its stanzas as separate scenes', () => {
+  const txt = '[0:03-0:08] one\n\n[0:10-0:15] two\n\n[0:19] three\n[0:20] four\n\n---\n[0:45] five';
+  assert.equal(parseScript(txt).scenes.length, 4);
+  const c = mk(txt, { bgMode: 'none' });
+  assert.ok(c.scenes[0].gone < c.scenes[1].t0 + 1, 'the first stanza is gone before the third starts');
+  assert.equal(frameAt(c, 16, {}).passes.flatMap((p) => p.runs).length, 0);
+});
+test('the lyrics demo compiles into separate scenes and uses the new syntax', async () => {
+  const { DEMO_LYRICS, MODES } = await import('../js/script.js');
+  assert.equal(MODES.lyrics.place, 'full');
+  const sc = parseScript(DEMO_LYRICS);
+  assert.ok(sc.scenes.length >= 9);
+  assert.ok(/::deco/.test(DEMO_LYRICS) && /fx=/.test(DEMO_LYRICS) && /\+\+\+/.test(DEMO_LYRICS) && /::out/.test(DEMO_LYRICS));
+  const c = mk(DEMO_LYRICS, { bgMode: 'none' });
+  assert.ok(c.scenes.some((s) => s.decor.length) && c.scenes.some((s) => s.runs.some((r) => r.fx?.length)));
+  for (let t = 0; t < 50; t += 0.5) for (const p of frameAt(c, t, {}).passes) for (const r of p.runs) assert.ok(Number.isFinite(r.x + r.y + r.alpha));
 });
 test('nothing is drawn before the first scene starts', () => {
   const c = mk('[0:05] hi there', { bgMode: 'scenes' });

@@ -21,8 +21,9 @@ const SECTIONS = [
     [SYNTAX, '(quietly)', 'Text in brackets is shown small and dim'],
   ] },
   { title: 'Scenes', note: 'A scene is one screen of text. Each scene keeps its own time and fades out by itself, so text never pops away when the next scene starts.', rows: [
-    [SYNTAX, '---', 'Start a new scene. Once you use ---, blank lines are only spacing'],
-    [SYNTAX, '(blank line)', 'Starts a new scene only when the script has no ---'],
+    [SYNTAX, '(blank line)', 'Starts a new scene. This is the usual way to separate stanzas'],
+    [SYNTAX, '---', 'Also starts a new scene (handy when you want to be explicit)'],
+    [SYNTAX, '+++', 'Keep the same scene across a blank line: put it on its own line next to the blank line'],
     [SYNTAX, '# Heading', 'An untimed # also starts a new scene (outlines only)'],
   ] },
   { title: 'Words', note: 'Put these on single words, or wrap several words in [ ].', rows: [

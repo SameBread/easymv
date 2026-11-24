@@ -22,7 +22,7 @@ export const SCRIPT_DEFAULTS = {
 /** One-click bundles of the options above. Text is never touched. */
 export const MODES = {
   presentation: { label: 'Presentation / explainer', mode: 'presentation', bgMode: 'scenes', reveal: 'auto', place: 'full', layouts: 'all', shadow: 0, pack: 'punchy', energy: 0.7, fit: 'script' },
-  lyrics: { label: 'Lyrics over a background', mode: 'lyrics', bgMode: 'none', reveal: 'word', place: 'lower', layouts: 'calm', shadow: 0.6, pack: 'smooth', energy: 0.4, fit: 'script', fg: '', accent: '' },
+  lyrics: { label: 'Lyrics over a background', mode: 'lyrics', bgMode: 'none', reveal: 'word', place: 'full', layouts: 'calm', shadow: 0.6, pack: 'smooth', energy: 0.4, fit: 'script', fg: '', accent: '' },
 };
 export function applyMode(s, id) { Object.assign(s, MODES[id]); }
 
@@ -143,77 +143,71 @@ Start **here**{color=accent delay=.6 motion=rise}`;
 
 export const DEMO_LYRICS = `@pack smooth
 
+// A blank line or --- starts a new scene. Each scene fades out by itself (::out 0.6 changes how long).
+// Put +++ between two lines to keep one scene across a blank line.
+// {shake} {wave} {fx=bounce+rainbow amp=1.5}  = word effects.   ::deco bar  = a line beside the text (off by default).
+
 ::trans fade
+::at B2
 [0:02.30-0:06.30] every dull **mem|o|ries**{big color=accent step=.22 motion=pop}
 
 ::trans fade
-[0:08.50-0:13.50] faces null then **fades**{big delay=.25 color=accent motion=fade} free
+::at B2
+[0:08.50-0:13.50] faces null then **fades**{big delay=.25 color=accent motion=fade fx=float} free
 
 ::style retro
 ::emph color
 ::trans push
+::deco bar color=accent
 ::at bottom-left
-[0:17.90] your **spectre**{big color=accent motion=rise}
+[0:17.90] your **spectre**{big color=accent motion=rise fx=float}
 [0:19.20] walks these streets {at=B2}
-[0:20.10] with me {at=C3}
+[0:20.10] with me {at=C3 motion=fade}
 
 ::style retro
 ::emph color
 ::trans push
 ::at top-right
-[0:21.47] in **shadows**{big color=dim motion=fade} {at=A2}
+[0:21.47] in **shadows**{big color=dim motion=fade fx=tremble} {at=A2}
 [0:22.20] only i {at=B3}
 [0:23.07-0:24.00] can see {at=C2}
 
 ::style retro
 ::emph color
 ::trans push
+::deco underline
 [0:24.43] every step {at=A2}
-[0:25.20-0:27.50] is a **question**{big color=accent motion=pop} mark {at=C3}
+[0:25.20-0:27.50] is a **question**{big color=accent motion=bounce fx=wobble} mark {at=C3}
 
 ::style handwritten
 ::emph color
 ::at A3
 [0:27.90] this city
-[0:28.30] that **forgets**{big color=accent motion=pop}
++++
+[0:28.30] that **forgets**{big color=accent motion=pop fx=shake}
 [0:29.70-0:31.00] the dark {at=C1 motion=fade}
 
 ::style handwritten
 ::emph color
 ::trans push
 ::at top
-[0:33.80-0:36.00] **rain**{big color=#7fc8ff} keeps falling slow {motion=rise}
+[0:33.80-0:36.00] **rain**{big color=#7fc8ff fx=bounce} keeps falling slow {motion=rise}
 
+---
 ::style handwritten
 ::emph color
+::out 0.8
 [0:36.37] and i... {at=A1}
-[0:37.27-0:40.30] maybe I'll find **peace**{size=1.8 color=accent motion=pop} {at=B3}
+[0:37.27-0:40.30] maybe I'll find **peace**{size=1.8 color=accent motion=spin fx=heartbeat} {at=B3}
 
 ::style smooth
 ::trans fade
+::deco brackets
 ::at middle-left
-[0:40.40-0:42.40] in the **hush**{big color=dim motion=fade} between
+[0:40.40-0:42.40] in the **hush**{big color=dim motion=fade fx=breathe} between
 
 ::style smooth
+::fx wave
 ::at B1
 [0:42.77] the breeze where the lights
-[0:44.77-0:46.10] hum **lul|la|bies**{big color=accent step=.25 motion=fade}
-
-::style smooth
-[0:46.90-0:49.00] city's feeling **bare**{size=1.8 motion=fade}
-
-::style retro
-::emph color
-::trans push
-::at A2
-[0:49.17] and im hearing **echoes**{big color=accent motion=rise}
-[0:51.40-0:53.03] call your name {at=C2 delay=.2}
-
-::style retro
-::emph color
-::at top
-[0:53.13-0:54.60] rain keeps falling {color=#7fc8ff}
-
-::at center
-::trans fade
-[0:54.90-1:02.00] i'm{small} **col^1.2~1.8|laps^1.5~1.8|ing^1.9**{color=accent motion=drop}`;
+[0:44.77-0:46.10] hum **lul|la|bies**{big color=accent step=.25 motion=fade fx=rainbow}`;

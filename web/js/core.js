@@ -500,7 +500,7 @@ export async function addTable(data, over = {}) {
   return id;
 }
 
-/** Add a script layer. `mode` is 'presentation' or 'lyrics' (lyrics = transparent, word-by-word, lower third). */
+/** Add a script layer. `mode` is 'presentation' or 'lyrics' (lyrics = transparent, word-by-word, full screen). */
 export async function addScript(text, mode = 'presentation', name = 'Script') {
   const id = uniqueId('script', takenIds());
   const script = { ...structuredClone(SCRIPT_DEFAULTS) };
