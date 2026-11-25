@@ -1,6 +1,6 @@
 import test from 'node:test'; import assert from 'node:assert';
-import { lintScript, applyFix, suggest } from '/home/claude/easymv/web/js/lint.js';
-import { beatAt, timeAt, snapSeconds, gridLines, detectTempo, tapTempo, parseBarTag } from '/home/claude/easymv/web/js/tempo.js';
+import { lintScript, applyFix, suggest } from '../js/lint.js';
+import { beatAt, timeAt, snapSeconds, gridLines, detectTempo, tapTempo, parseBarTag } from '../js/tempo.js';
 const pieces=['[0:01]','[@3.2]','::fx','::deco','@fx','{','}','**','---','+++','//','\n','\n\n','# ','- ','hello','{fx=wave,amp=2}','::out cut','[1:2:3]','[-5]','::layout','\t','é','::sync beat','[0:05-0:02]'];
 let seed=7; const r=()=> (seed=(seed*1664525+1013904223)>>>0)/2**32;
 test('lint never throws, fixes never throw, suggest never throws',()=>{
