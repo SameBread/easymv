@@ -232,9 +232,12 @@ const srv = http.createServer((q, s) => {
     await until(() => document.querySelectorAll('.panel-script .line-row').length >= 15).catch(async () => { console.log('rows', await E(() => document.querySelectorAll('.panel-script .line-row').length), await E(() => document.querySelector('.panel-script .sp-body')?.innerText.slice(0, 200))); throw new Error('rows'); });
     check('timing tab lists every lyric line with start and end', (await n('.panel-script .line-row .time-input')) >= 30);
     await pg.click('.panel-script .sp-tab:has-text("Scenes")');
-    await until(() => document.querySelectorAll('.panel-script .scene-card').length >= 10);
-    await pg.locator('.panel-script .scene-card select[aria-label="Scene 2 Layout"]').selectOption('stack');
-    await until(() => easymv.core.state.project.elements.find((x) => x.type === 'script').script.text.includes('::layout stack'));
+    await until(() => document.querySelectorAll('.panel-script .scene-card').length >= 9);
+    const bigwords = () => easymv.core.state.project.elements.find((x) => x.type === 'script').script.text.match(/::layout bigword/g)?.length ?? 0;
+    const lockBefore = await E(bigwords);
+    await pg.locator('.panel-script .scene-card select[aria-label="Scene 2 Layout"]').selectOption('bigword');
+    await until((n0) => (easymv.core.state.project.elements.find((x) => x.type === 'script').script.text.match(/::layout bigword/g)?.length ?? 0) > n0, lockBefore);
+    check('scene layout lock is written into the script text', (await E(bigwords)) === lockBefore + 1, `${lockBefore} -> ${await E(bigwords)}`);
     check('scene layout lock is written into the script text', true);
     await pg.click('.panel-script .sp-tab:has-text("Write")');
     await pg.locator('.panel-script .seg-btn:has-text("Presentation")').click();

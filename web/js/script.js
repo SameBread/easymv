@@ -1,7 +1,7 @@
 // Settings, presets, demos, compile cache and text measuring for "script" layers
 // (kinetic text for presentations, lyric videos and captions).
 import { parseScript, compileScript, PACKS, getScriptTempo } from './kinetic.js';
-import { familyCss, nearestWeight, migrateFont } from './fonts.js';
+import { familyCss, nearestWeight, migrateFont, fontReady, loadBundled } from './fonts.js';
 
 export const SCRIPT_DEFAULTS = {
   text: '# Your title\nA short line to start\n\n- First point\n- Second **point**\n\n> A quote worth reading\n-- Someone',
@@ -37,9 +37,11 @@ export function scriptSettings(def) {
 }
 
 let ctx = null;
+let measuredEarly = false;     // set when something was measured before its font had loaded (the numbers would be wrong)
 export function measureText(text, font, weight, px, italic = false) {
   ctx ??= document.createElement('canvas').getContext('2d');
   const f = migrateFont(font);
+  if (!fontReady(f)) measuredEarly = true;
   ctx.font = `${italic ? 'italic ' : ''}${nearestWeight(f, weight)} ${px}px ${familyCss(f)}`;
   return ctx.measureText(text).width;
 }
@@ -52,11 +54,14 @@ export function compileFor(def, W, H, total, measure = measureText) {
   const key = JSON.stringify([s, W, H, s.fit === 'project' ? Math.round(total * 10) : 0, tempo]);
   let c = cache.get(key);
   if (!c) {
+    measuredEarly = false;
     c = compileScript(parseScript(s.text), { W, H, measure, pack: s.pack, energy: s.energy, seed: s.seed,
       fontHead: s.fontHead || undefined, fontBody: s.fontBody || undefined, total: s.fit === 'project' ? total : undefined,
       bgMode: s.bgMode, bgColor: s.bgColor, fg: s.fg || undefined, accent: s.accent || undefined,
       reveal: s.reveal, place: s.place, layoutSet: s.layouts, shadow: s.shadow, deco: s.deco, look: s.look, tempo });
-    cache.set(key, c);
+    // text measured before its font finished loading is spaced by a stand-in font: use it for now but never keep it
+    if (!measuredEarly) cache.set(key, c);
+    else for (const f of scriptFonts(def)) loadBundled(migrateFont(f));      // start loading so the next call measures properly
     if (cache.size > 12) cache.delete(cache.keys().next().value);
   }
   return c;
@@ -144,72 +149,75 @@ Agree or not
 Start **here**{color=accent delay=.6 motion=rise}`;
 
 export const DEMO_LYRICS = `@pack smooth
+@energy 0.25
+@fx breathe
 
-// A blank line or --- starts a new scene. Each scene fades out by itself (::out 0.6 changes how long).
-// Put +++ between two lines to keep one scene across a blank line.
-// {shake} {wave} {fx=bounce+rainbow amp=1.5}  = word effects.   ::deco bar  = a line beside the text (off by default).
-
-::trans fade
-::at B2
-[0:02.30-0:06.30] every dull **mem|o|ries**{big color=accent step=.22 motion=pop}
-
-::trans fade
-::at B2
-[0:08.50-0:13.50] faces null then **fades**{big delay=.25 color=accent motion=fade fx=float} free
-
-::style retro
-::emph color
-::trans push
-::deco bar color=accent
-::at bottom-left
-[0:17.90] your **spectre**{big color=accent motion=rise fx=float}
-[0:19.20] walks these streets {at=B2}
-[0:20.10] with me {at=C3 motion=fade}
-
-::style retro
-::emph color
-::trans push
-::at top-right
-[0:21.47] in **shadows**{big color=dim motion=fade fx=tremble} {at=A2}
-[0:22.20] only i {at=B3}
-[0:23.07-0:24.00] can see {at=C2}
-
-::style retro
-::emph color
-::trans push
-::deco underline
-[0:24.43] every step {at=A2}
-[0:25.20-0:27.50] is a **question**{big color=accent motion=bounce fx=wobble} mark {at=C3}
-
-::style handwritten
-::emph color
-::at A3
-[0:27.90] this city
-+++
-[0:28.30] that **forgets**{big color=accent motion=pop fx=shake}
-[0:29.70-0:31.00] the dark {at=C1 motion=fade}
-
-::style handwritten
-::emph color
-::trans push
-::at top
-[0:33.80-0:36.00] **rain**{big color=#7fc8ff fx=bounce} keeps falling slow {motion=rise}
-
----
-::style handwritten
+::layout center
+::reveal word
 ::emph color
 ::out 0.8
-[0:36.37] and i... {at=A1}
-[0:37.27-0:40.30] maybe I'll find **peace**{size=1.8 color=accent motion=spin fx=heartbeat} {at=B3}
-
-::style smooth
 ::trans fade
-::deco brackets
-::at middle-left
-[0:40.40-0:42.40] in the **hush**{big color=dim motion=fade fx=breathe} between
+[0:03.80] Every dull{color=dim} memories
+[0:10.50] faces null{color=dim motion=fade} then fades{motion=fade} free{color=dim}
 
-::style smooth
+::layout stack
+::reveal line
+::out 0.5
+::trans fade
+[0:19.40] Your **spectre**{motion=fade}
+[0:20.70] walks these streets
+[0:21.60] with me{color=dim}
+
+::layout stack
+::reveal line
+::out 0.5
+::trans fade
+[0:22.97] in shadows{color=dim motion=fade}
+[0:23.70] [only i]{size=0.9}
+[0:24.57] can see{motion=fade}
+
+::layout left
+::align left
+::out 0.6
+::trans fade
+[0:25.93] Every step
+[0:26.70] is a [question mark]{motion=tilt}
+[0:29.40] this city
+[0:29.80] that forgets
+[0:31.20-0:33.50] the **dark**{color=dim}
+
+::layout center
 ::fx wave
-::at B1
-[0:42.77] the breeze where the lights
-[0:44.77-0:46.10] hum **lul|la|bies**{big color=accent step=.25 motion=fade fx=rainbow}`;
+::amp 0.8
+::speed 0.8
+::out 0.4
+::trans fade
+[0:35.30] Rain keeps falling{motion=drop} slow{delay=0.3 color=dim}
+[0:37.87] [and i...]{color=dim motion=fade}
+
+::layout center
+::deco bar
+::out 0.6
+::trans fade
+[0:38.77] maybe I'll find **peace**{color=accent motion=rise}
+[0:41.90] In the hush{size=0.85 color=dim} between
+[0:44.27] the breeze{motion=slideR}
+[0:45.27] where the lights{color=accent}
+[0:46.27] [hum lullabies]{wave}
+
+::layout stack
+::deco none
+::out 0.5
+::trans fade
+[0:48.40] city's feeling bare{color=dim}
+[0:50.67] and i'm hearing echoes{motion=zoom}
+[0:52.90-0:54.60] call **your name**{color=accent}
+
+::layout bigword
+[0:54.63-0:56.39] Rain keeps falling{motion=drop}
+
+::layout bigword
+::at B2
+[0:56.40] I'm{size=0.5 color=dim}
+[0:58.00-1:02.50] col~2.0|laps~1.4|ing{motion=drop shake}
+`;

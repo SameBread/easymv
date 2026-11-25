@@ -34,6 +34,7 @@ const GENERIC = new Set(['serif', 'sans-serif', 'monospace', 'system-ui', 'cursi
 export const migrateFont = (name) => (name === 'cursive' ? 'Caveat' : name === 'fantasy' ? 'Anton' : name || DEFAULT_FONT);
 
 const loaded = new Map();       // name -> Promise
+const ready = new Set();        // names whose files have finished loading
 let base = new URL('../fonts/', import.meta.url).href;
 export const setFontBase = (u) => { base = u; };
 
@@ -45,12 +46,14 @@ export function loadBundled(name) {
     loaded.set(name, Promise.all(b.weights.map(async (w) => {
       const face = new FontFace(b.name, `url(${base}${b.file}-${w}.woff2)`, { weight: String(w), style: 'normal' });
       await face.load(); document.fonts.add(face);
-    })).catch(() => { loaded.delete(name); }));
+    })).then(() => { ready.add(name); }).catch(() => { loaded.delete(name); }));
   }
   return loaded.get(name);
 }
 export const loadAllBundled = () => Promise.all(BUNDLED.map((b) => loadBundled(b.name)));
 export const isBundled = (name) => BUNDLED_BY_NAME.has(name);
+/** True when text measured in this font is trustworthy: not a bundled font, or its files have finished loading. */
+export const fontReady = (name) => !BUNDLED_BY_NAME.has(name) || ready.has(name) || typeof FontFace === 'undefined';
 
 /** Pick the closest bundled weight so bold text does not get faux-bolded. */
 export function nearestWeight(name, want) {

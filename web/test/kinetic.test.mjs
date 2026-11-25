@@ -229,11 +229,11 @@ test('the lyrics demo compiles into separate scenes and uses the new syntax', as
   const { DEMO_LYRICS, MODES } = await import('../js/script.js');
   assert.equal(MODES.lyrics.place, 'full');
   const sc = parseScript(DEMO_LYRICS);
-  assert.ok(sc.scenes.length >= 9);
-  assert.ok(/::deco/.test(DEMO_LYRICS) && /fx=/.test(DEMO_LYRICS) && /\+\+\+/.test(DEMO_LYRICS) && /::out/.test(DEMO_LYRICS));
+  assert.equal(sc.scenes.length, 9);
+  assert.ok(/::deco/.test(DEMO_LYRICS) && /@fx/.test(DEMO_LYRICS) && /::fx/.test(DEMO_LYRICS) && /::out/.test(DEMO_LYRICS) && /~2\.0\|laps/.test(DEMO_LYRICS));
   const c = mk(DEMO_LYRICS, { bgMode: 'none' });
   assert.ok(c.scenes.some((s) => s.decor.length) && c.scenes.some((s) => s.runs.some((r) => r.fx?.length)));
-  for (let t = 0; t < 50; t += 0.5) for (const p of frameAt(c, t, {}).passes) for (const r of p.runs) assert.ok(Number.isFinite(r.x + r.y + r.alpha));
+  for (let t = 0; t < 70; t += 0.5) for (const p of frameAt(c, t, {}).passes) for (const r of p.runs) assert.ok(Number.isFinite(r.x + r.y + r.alpha));
 });
 test('nothing is drawn before the first scene starts', () => {
   const c = mk('[0:05] hi there', { bgMode: 'scenes' });
