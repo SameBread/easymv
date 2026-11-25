@@ -25,6 +25,15 @@ export class History {
   /** Label of the action that Redo would re-apply. */
   get redoLabel() { return this.canRedo ? this.future.at(-1).label : null; }
 
+  /** Every step, oldest first: [{ label, current }]. Index 0 is the initial state; the last is the newest redo step. */
+  entries() {
+    const all = [...this.past, this.present, ...[...this.future].reverse()];
+    const cur = this.past.length;
+    return all.map((e, i) => ({ label: e.label, current: i === cur }));
+  }
+  /** How many steps to undo (negative) or redo (positive) to reach entry `i`. */
+  offsetTo(i) { return i - this.past.length; }
+
   /** Record a new state. Returns false if nothing changed. */
   push(state, label, key = null) {
     if (state === this.present.state) return false;

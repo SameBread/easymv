@@ -35,13 +35,17 @@ export function vp9LevelCode(width, height, fps) {
   return '52';
 }
 
-export function videoBitrate(width, height, fps) {
-  return Math.round(Math.min(40_000_000, Math.max(2_000_000, width * height * fps * 0.09)));
+/** Export quality presets: a multiplier on the default bitrate. */
+export const QUALITY = { draft: { label: 'Draft (small file, quick to share)', k: 0.4 }, standard: { label: 'Standard', k: 1 }, high: { label: 'High (sharper, bigger file)', k: 1.7 }, max: { label: 'Maximum (for editing later)', k: 2.8 } };
+export const qualityFactor = (q) => QUALITY[q]?.k ?? 1;
+export function videoBitrate(width, height, fps, quality = 'standard') {
+  const k = qualityFactor(quality);
+  return Math.round(Math.min(80_000_000, Math.max(1_000_000, width * height * fps * 0.09 * k)));
 }
 
 /** Rough output size in bytes (video + 192 kbps audio), for in-memory-export warnings. */
-export function estimateOutputBytes({ width, height, fps, durationSec }) {
-  return Math.round(((videoBitrate(width, height, fps) + 192_000) * durationSec) / 8);
+export function estimateOutputBytes({ width, height, fps, durationSec, quality }) {
+  return Math.round(((videoBitrate(width, height, fps, quality) + 192_000) * durationSec) / 8);
 }
 
 export function isLikelyMobile() {
@@ -49,8 +53,8 @@ export function isLikelyMobile() {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform ?? ''));
 }
 
-function configs({ width, height, fps, sampleRate, channels }) {
-  const bitrate = videoBitrate(width, height, fps);
+function configs({ width, height, fps, sampleRate, channels, quality }) {
+  const bitrate = videoBitrate(width, height, fps, quality);
   const ch = Math.min(2, channels);
   return {
     h264: { codec: `avc1.4d00${avcLevelHex(width, height, fps)}`, width, height, bitrate, framerate: fps, avc: { format: 'avc' } },

@@ -13,6 +13,7 @@ import { createSignalsPanel } from './panels/signals.js';
 import { createLyricsPanel } from './panels/lyrics.js';
 import { createScriptPanel } from './panels/script.js';
 import { openTempoDialog } from './tempodialog.js';
+import { QUALITY, estimateOutputBytes } from '../exporter.js';
 import { VIS_PRESETS } from '../visualizer.js';
 import { FX_KINDS, FX_IDS } from '../effects.js';
 import { DECK_MODES, parseClock, clockText } from '../deck.js';
@@ -206,6 +207,9 @@ export function createShell(root, dv) {
     start: () => { core.stop(); core.seek(0); }, end: () => { core.stop(); core.seek(core.totalFrames() - 1); },
     back10: () => core.skip(-10), fwd10: () => core.skip(10), loop: () => core.setLoop(!core.transport.loop),
     tap: () => commands.tap.run(),
+    marker: () => core.addMarker(), markerPrev: () => core.seekMarker(-1), markerNext: () => core.seekMarker(1),
+    metronome: () => core.setMetronome(!state.prefs.metronome),
+    help: () => shortcutsDialog(),
     toolSelect: () => core.setPreviewTool('select'), toolMove: () => core.setPreviewTool('move'),
     toolRotate: () => core.setPreviewTool('rotate'), toolScale: () => core.setPreviewTool('scale'),
     toggleEdit: () => core.setPreviewEdit(!state.prefs.previewEdit),
@@ -242,6 +246,7 @@ export function createShell(root, dv) {
     Edit: () => [
       menuItem(commands.undo, { label: core.canUndo() ? `Undo ${core.undoLabel()}` : 'Undo', disabled: !core.canUndo() }),
       menuItem(commands.redo, { label: core.canRedo() ? `Redo ${core.redoLabel()}` : 'Redo', disabled: !core.canRedo() }),
+      { label: 'History…', icon: 'history', run: historyDialog },
       { separator: true }, menuItem(commands.dup, { disabled: !sel() }), menuItem(commands.del, { disabled: !sel() })],
     View: () => [
       { header: 'Theme' },
@@ -414,11 +419,14 @@ export function createShell(root, dv) {
     const info = h('p', `${p.resolution[0]}×${p.resolution[1]} at ${p.videoFps} fps, ${(core.totalFrames() / p.videoFps).toFixed(1)} s. Rendered frame by frame, so it is identical to the preview.`);
     const hidden = state.project.elements.filter((e) => (e.base?.visible ?? 1) < 0.5 && !core.trackOf(e.id, 'visible')).length;
     const note = hidden ? h('p.note', `${hidden} hidden layer${hidden === 1 ? '' : 's'} will be skipped.`) : null;
+    const sizeEst = () => { const mb = estimateOutputBytes({ width: p.resolution[0], height: p.resolution[1], fps: p.videoFps, durationSec: core.totalFrames() / p.videoFps, quality: state.prefs.exportQuality }) / 1048576; return `About ${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB.`; };
+    const estEl = h('p.muted', sizeEst());
+    const qual = selectField({ label: 'Quality', value: state.prefs.exportQuality ?? 'standard', options: Object.entries(QUALITY).map(([k, v]) => [k, v.label]), onChange: (v) => { core.setPref('exportQuality', v); estEl.textContent = sizeEst(); } });
     let d;
     const start = h('button.btn.filled', { type: 'button', onclick: async () => { start.disabled = true; cancel.hidden = false; await core.exportVideo(); start.disabled = false; cancel.hidden = true; } }, icon('movie'), 'Start export');
     const cancel = h('button.btn.text', { type: 'button', hidden: true, onclick: () => core.cancelExport() }, 'Cancel export');
     exportUpdate = () => { bar.value = state.export.frac; msg.textContent = state.export.msg ?? ''; };
-    d = dialog({ title: 'Export video', body: [info, note, bar, msg, h('div.row', start, cancel)], actions: [{ label: 'Close' }], onClose: () => { exportUpdate = null; } });
+    d = dialog({ title: 'Export video', body: [info, note, qual.el, estEl, bar, msg, h('div.row', start, cancel)], actions: [{ label: 'Close' }], onClose: () => { exportUpdate = null; } });
     exportUpdate();
   }
 
@@ -520,6 +528,17 @@ export function createShell(root, dv) {
       h('li', 'Script: write an outline and get animated, automatically laid-out scenes. Use it for presentations, or switch to "Lyrics over a background" for song text with word-by-word reveal. Try Add → Script → Demo.'),
       h('li', 'Window → Workspaces switches layouts. Drag panel tabs to rearrange, then Save workspace as…')),
     h('p.muted', 'Tip: Quick start adds a demo layer and automatic sound links so you can see something moving right away.')], actions: [{ label: 'Close', variant: 'filled' }] });
+  const historyDialog = () => {
+    const list = h('ol.hist-list');
+    const render = () => {
+      list.replaceChildren(...core.historyEntries().map((e, i, all) => h('li', { class: e.current ? 'now' : i > all.findIndex((x) => x.current) ? 'redo' : '' },
+        h('button.hist-item', { type: 'button', 'aria-current': e.current ? 'step' : null, onclick: async () => { await core.jumpHistory(i); render(); } },
+          h('span.hist-n', String(i)), h('span', e.label), e.current ? h('b.hist-now', 'you are here') : null))).reverse());
+    };
+    render();
+    const off = on('history', render);
+    dialog({ title: 'History', body: [h('p.muted', 'Every change this session, newest first. Click a step to go back (or forward) to it. Faded steps are ones you undid.'), list], onClose: () => off?.() });
+  };
   const shortcutsDialog = () => {
     const keys = () => state.prefs.keys ?? {};
     const body = h('div.keymap');

@@ -63,3 +63,11 @@ test('suggestions', () => {
   assert.equal(suggest('plain text', 5), null);
   assert.equal(closest('bunce', ['bounce', 'pop']), 'bounce');
 });
+
+test('look values are checked and suggested', async () => {
+  const { lintScript, suggest } = await import('../js/lint.js');
+  assert.equal(lintScript('::look glow+outline\n[0:01] Hi').filter((i) => i.severity !== 'info').length, 0);
+  const bad = lintScript('::look glwo\n[0:01] Hi');
+  assert.ok(bad.some((i) => /glow/.test(i.msg)));
+  assert.ok(suggest('::look ne', 9).items.some((x) => x.insert === 'neon'));
+});

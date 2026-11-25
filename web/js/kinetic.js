@@ -155,6 +155,10 @@ const FX_SET = new Set(FX_NAMES);
 /** Decorations drawn around a scene's text:  ::deco bar  /  ::deco underline+brackets color=#ff0 */
 export const DECO_NAMES = ['bar', 'bar-right', 'bars', 'underline', 'overline', 'rules', 'box', 'brackets', 'panel', 'highlight', 'diamonds'];
 const DECO_SET = new Set(DECO_NAMES);
+/** How the letters themselves are drawn:  ::look glow  /  ::look outline+shadow  (combine with +). */
+export const LOOK_NAMES = ['outline', 'shadow', 'glow', 'neon', 'gradient', 'extrude'];
+const LOOK_SET = new Set(LOOK_NAMES);
+export const parseLook = (str) => [...new Set(String(str ?? '').toLowerCase().split(/[+|,\s]+/).filter((x) => LOOK_SET.has(x)))];
 export const parseFxList = (str) => String(str ?? '').toLowerCase().split(/[+|,\s]+/).filter((x) => FX_SET.has(x));
 
 export function parseMods(str) {
@@ -844,7 +848,7 @@ export function compileScript(script, ctx) {
       if (reveal === 'line') rt = lineT[li] + ord * 0.02;
       else if (reveal === 'word') { const nW = sc.lines[li].words.length; const span = Math.max(0.2, lineEnds[li] - lineT[li]); rt = lineT[li] + ord * Math.min(0.9, (span * 0.8) / Math.max(1, nW)); }
       rt += r.mod?.delay ?? 0;
-      const base = { ...r, idx, font: scx.font(r.role), weight: scx.weight(r.role, r.st), color: onBar ? 'onAccent' : c,
+      const base = { ...r, idx, srcLine: sc.lines[li]?.idx, font: scx.font(r.role), weight: scx.weight(r.role, r.st), color: onBar ? 'onAccent' : c,
         t0: r.deco ? lineT[0] : rt, anim: { type: r.deco ? 'zoom' : (IN_FOR[r.mod?.motion] ?? inType), spring },
         bar: onBar, phase: rnd(seed, 'ph', i, idx) * 6.283,
         ...(fxl.length && !r.deco ? { fx: fxl, fxAmp: r.mod?.amp ?? lmod?.amp ?? sceneAmp, fxSpeed: r.mod?.speed ?? lmod?.speed ?? sceneSpeed, fxSync: r.mod?.sync ?? lmod?.sync ?? sceneSync } : {}) };
@@ -872,7 +876,7 @@ export function compileScript(script, ctx) {
     const outD = od === 'cut' || od === 'none' ? 0 : Number.isFinite(Number(od)) && od !== '' ? clamp(Number(od), 0, 4) : 0.35;
     const gone = endX[i] ? t0 + d : t0 + d + outD;
     scenes.push({ i, t0, t1: t0 + d, dur: d, layout: used, pal, bgKind, runs, decor, inType, emphStyle, spring,
-      idle: SP.idle, pulse: SP.pulse, drift: SP.drift, pack: styleName, trans: null, enter: null, next: -1, lineT, outD, gone, reveal, tempo: normTempo(ctx.tempo ?? TEMPO) });
+      idle: SP.idle, pulse: SP.pulse, drift: SP.drift, pack: styleName, trans: null, enter: null, next: -1, lineT, outD, gone, reveal, look: parseLook(sc.dir.look ?? opts.look ?? ctx.look), tempo: normTempo(ctx.tempo ?? TEMPO) });
   });
 
   // transitions between scenes
@@ -1079,7 +1083,7 @@ function sceneRuns(sc, t, W, H, pulse) {
       const e = spring(t - r.t0 - 0.05, 220, 0.9);
       if (e > 0) bars.push({ x: r.x - r.w / 2 - r.size * 0.12, y: r.y - r.size * 0.42, w: (r.w + r.size * 0.24) * Math.min(1, e), h: r.size * 0.86, rot: r.rot ?? 0, cx: r.x, cy: r.y, c: sc.pal.accent });
     }
-    out.push({ text: r.text, font: r.font, weight: r.weight, st: r.st, size: r.size, color: st.color ? rgbToHex(st.color) : rgbToHex(dim), x: r.x + st.dx, y: r.y + st.dy, sx: st.sx, sy: st.sy, rot: st.rot, alpha: st.alpha, clip: st.clip });
+    out.push({ text: r.text, font: r.font, weight: r.weight, st: r.st, size: r.size, color: st.color ? rgbToHex(st.color) : rgbToHex(dim), x: r.x + st.dx, y: r.y + st.dy, sx: st.sx, sy: st.sy, rot: st.rot, alpha: st.alpha, clip: st.clip, srcLine: r.srcLine, w: r.w, ...(r.deco ? { deco: true } : {}) });
   }
   return { runs: out, bars };
 }
@@ -1175,6 +1179,7 @@ export function frameAt(c, t, { pulse = 0 } = {}) {
     tf.pair = !!entry.pair;
     const d = drawScene(entry.sc, t, c.W, c.H, pulse, tf);
     if (c.shadow) for (const r of d.runs) r.shadow = c.shadow;
+    if (sc.look?.length) { const lk = sc.look.join('+'); for (const r of d.runs) if (!r.deco) r.look = lk; }
     passes.push(d);
   }
   // a transition edge line for wipes

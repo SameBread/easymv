@@ -278,3 +278,15 @@ test('effects move the word and are repeatable', () => {
   const r = mk('[0:01] word{rainbow}', { bgMode: 'none' });
   assert.notEqual(frameAt(r, 1.5, {}).passes[0].runs[0].color, frameAt(r, 1.9, {}).passes[0].runs[0].color);
 });
+
+import { parseLook, LOOK_NAMES } from '../js/kinetic.js';
+test('text looks: default plain, ::look per scene, @look for all, runs carry it', () => {
+  assert.deepEqual(parseLook('Glow+outline  nope'), ['glow', 'outline']);
+  assert.deepEqual(LOOK_NAMES.includes('neon'), true);
+  const plain = compileScript(parseScript('[0:01] Hello world'), { W: 1280, H: 720, measure });
+  assert.deepEqual(plain.scenes[0].look, []);
+  const c = compileScript(parseScript('@look outline\n[0:01] One\n\n::look neon+glow\n[0:05] Two'), { W: 1280, H: 720, measure });
+  assert.deepEqual(c.scenes.map((s) => s.look), [['outline'], ['neon', 'glow']]);
+  const f = frameAt(c, 3); assert.ok(f.passes[0].runs.filter((r) => !r.deco).every((r) => r.look === 'outline'));
+  const f2 = frameAt(c, 7); assert.ok(f2.passes.at(-1).runs.filter((r) => !r.deco).every((r) => r.look === 'neon+glow'));
+});

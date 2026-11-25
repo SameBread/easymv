@@ -8,7 +8,7 @@ import { state, on, layerById, fmtTimeMs } from '../../core.js';
 import { fontField } from '../fontpicker.js';
 import { h, icon, clear, numField, selectField, colorField, toggle, rafThrottle, showMenu } from '../dom.js';
 import { scriptSettings, compileFor, MODES, applyMode } from '../../script.js';
-import { PACKS, PACK_IDS, LAYOUT_IDS, TRANSITION_IDS, DECO_NAMES, summarize } from '../../kinetic.js';
+import { PACKS, PACK_IDS, LAYOUT_IDS, TRANSITION_IDS, DECO_NAMES, LOOK_NAMES, summarize } from '../../kinetic.js';
 import { cheatSheet } from './cheatsheet.js';
 import { scriptEditor } from '../scripteditor.js';
 import { listLines, setLineTime, getDir, setDir, sceneRows, scriptToLrc, lrcToScript } from '../../scripttext.js';
@@ -191,6 +191,7 @@ export function createScriptPanel(shell) {
         selectField({ label: 'Appear', value: s.reveal, options: [['auto', 'Springy, quick stagger'], ['word', 'Word by word across the line'], ['line', 'Whole line at once']], onChange: set('reveal', 'reveal') }).el,
         selectField({ label: 'Position', value: s.place, options: [['full', 'Full screen'], ['lower', 'Lower third'], ['middle', 'Middle band'], ['upper', 'Upper third']], onChange: set('place', 'position') }).el,
         selectField({ label: 'Decoration', value: s.deco, title: 'Lines, frames and highlights drawn around the text. Off by default. In the text: ::deco bar', options: [['none', 'None'], ...DECO_NAMES.map((n) => [n, n.replace('-', ' ')])], onChange: set('deco', 'decoration') }).el,
+        selectField({ label: 'Text look', value: s.look ?? 'none', title: 'How the letters are drawn. Off by default. In the text: ::look glow', options: [['none', 'Plain'], ...LOOK_NAMES.map((n) => [n, n])], onChange: set('look', 'text look') }).el,
         selectField({ label: 'Layouts', value: s.layouts, options: [['all', 'All (varied, dynamic)'], ['calm', 'Calm (centre, left, diagonal)']], onChange: set('layouts', 'layouts') }).el,
         numField({ label: 'Shadow', value: s.shadow * 100, min: 0, max: 100, step: 5, suffix: '%', title: 'Soft dark shadow behind the text, for busy backgrounds', onChange: (v) => set('shadow', 'shadow')(v / 100) }).el,
         customColor('fg', 'Text colour', '#ffffff'), customColor('accent', 'Accent', '#ff3d71'),
@@ -263,6 +264,7 @@ export function createScriptPanel(shell) {
     if (element.contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
     if (sig() !== lastSig) build();
   });
+  shell.scriptJump = (line) => { tab = 'write'; build(); requestAnimationFrame(() => shell.scriptEditor?.jump(line)); };
   on('project', refresh); on('selection', refresh);
   on('frame', rafThrottle(markNow));
   build();

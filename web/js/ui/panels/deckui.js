@@ -3,7 +3,7 @@
 import * as core from '../../core.js';
 import { state } from '../../core.js';
 import { h, icon, selectField, toggle } from '../dom.js';
-import { DECK_MODES, DECK_TRANS, deckSettings, parseClock, clockText } from '../../deck.js';
+import { DECK_MODES, DECK_TRANS, KEN_BURNS, deckSettings, parseClock, clockText } from '../../deck.js';
 
 export function createDeckSections(section, shell) {
   const fpsNow = () => core.fps?.() ?? state.project.videoFps ?? 30;
@@ -48,6 +48,7 @@ export function createDeckSections(section, shell) {
     const beatsN = Number(d.beats) || 4;
     const beats = h('input.text-input.sm', { type: 'number', min: '0.25', max: '128', step: '0.25', value: String(beatsN), 'aria-label': 'Beats per slide' });
     beats.addEventListener('change', () => { const v = Number(beats.value); if (v > 0) set({ beats: v }, 'Beats per slide'); });
+    const kbSel = selectField({ label: 'Ken Burns (slow movement on pictures)', value: d.kenBurns ?? 'off', options: KEN_BURNS, onChange: (v) => set({ kenBurns: v }, 'Ken Burns') }).el;
     const transSel = selectField({ label: 'Default transition', value: d.trans, options: DECK_TRANS, onChange: (v) => set({ trans: v }, 'Default transition') }).el;
     const fade = h('input.text-input.sm', { type: 'number', min: '0.05', max: '3', step: '0.05', value: String(d.fade), 'aria-label': 'Transition length' });
     fade.addEventListener('change', () => { const v = Number(fade.value); if (v > 0) set({ fade: v }, 'Transition length'); });
@@ -63,6 +64,7 @@ export function createDeckSections(section, shell) {
       d.mode === 'beats' ? h('div.row', ...[[1, '1 beat'], [2, '2'], [4, '1 bar'], [8, '2 bars'], [16, '4 bars']].map(([n, l]) => h('button.btn.text.sm', { type: 'button', class: d.beats === n ? 'on' : '', onclick: () => set({ beats: n }, 'Beats per slide') }, l))) : null,
       d.mode === 'fixed' || d.slides.some((s) => !s.pages?.length) ? h('label.fld.col', h('span.fld-label', d.mode === 'fixed' ? 'Seconds per slide' : 'Seconds for slides without text'), fixed) : null,
       h('div.row.two', transSel, h('label.fld.col', h('span.fld-label', 'Transition (s)'), fade)),
+      kbSel,
       toggle({ label: 'Animate (fades, zoom, chart growth)', value: d.animate !== false, onChange: (v) => set({ animate: v }, 'Slideshow animation') }).el);
 
     // per-slide table

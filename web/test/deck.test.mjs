@@ -61,3 +61,20 @@ test('beats mode: every slide is N beats and cuts land on the grid', () => {
   const nt = deckSpans({ mode: 'beats', beats: 4, fixed: 5, slides: slides(2) }, { songSec: 60 });
   near(nt.total, 10, 1e-6);
 });
+
+test('Ken Burns adds slow, sorted scale keys across each span and leaves other cases alone', () => {
+  const sorted = (ks) => ks.every((k, i) => !i || k.t >= ks[i - 1].t);
+  const plain = artMotion([[0, 4]], 'cut');
+  assert.deepEqual(plain.tracks, {});                          // unchanged without Ken Burns
+  const zin = artMotion([[0, 4]], 'cut', 0.4, 'in');
+  assert.ok(zin.tracks.scale[1].v > zin.tracks.scale[0].v);
+  const zout = artMotion([[0, 4]], 'fade', 0.4, 'out');
+  assert.ok(zout.tracks.scale.at(-1).v < zout.tracks.scale[0].v);
+  for (const trans of ['cut', 'fade', 'zoom', 'push', 'rise']) for (const kb of ['in', 'out', 'pan', 'auto']) {
+    const m = artMotion([[0, 3], [4, 6.5], [8, 8.3]], trans, 0.4, kb);
+    for (const ks of Object.values(m.tracks)) assert.ok(sorted(ks), `${trans}/${kb} unsorted`);
+  }
+  const pan = artMotion([[0, 4]], 'cut', 0.4, 'pan');
+  assert.ok(pan.tracks.positionX[1].v !== pan.tracks.positionX[0].v && pan.tracks.scale[0].v > 1);
+  assert.equal(artMotion([[0, 4]], 'push', 0.4, 'in').tracks.scale, undefined);   // push owns the position, no zoom added
+});

@@ -84,6 +84,7 @@ export function createTimelinePanel(shell) {
               ...NOTE_DIVISIONS.map(([v, l]) => ({ label: l, icon: g === v ? 'done' : null, run: () => { core.setPref('grid', v); buildToolbar(); render(); } }))]) }, icon('grid_on'), g === 'off' ? 'Grid off' : (NOTE_DIVISIONS.find((x) => x[0] === g)?.[1] ?? g)) : null);
       })(),
       h('button.btn.text.sm', { type: 'button', title: 'Add a section starting at the playhead', onclick: () => core.addSection() }, icon('flag'), 'Section'),
+      h('button.btn.text.sm', { type: 'button', title: 'Drop a marker at the playhead (Shift+M). Jump between markers with [ and ]', onclick: () => core.addMarker() }, icon('bookmark'), 'Marker'),
       h('button.btn.text.sm', { type: 'button', title: 'Show the layer at the playhead until the next cut', onclick: () => cutHere() }, icon('content_cut'), 'Split'),
       h('span.grow'),
       h('span.muted.tl-time', `${fmtTime(state.frame / fps())} / ${fmtTime(total() / fps())}`));
@@ -150,6 +151,10 @@ export function createTimelinePanel(shell) {
       const sel = shell.selectedSection === s.id;
       tr.append(h('div.sect-band', { class: sel ? 'sel' : '', dataset: { role: 'sec', id: s.id }, style: { left: `${xOf(s.start)}px`, width: `${Math.max(6, xOf(s.end - s.start))}px`, '--c': s.color }, title: `${s.name} — drag to move with its keyframes (Alt: band only)` },
         h('span.sect-name', s.name), h('i.grip.l', { dataset: { role: 'sec-l', id: s.id } }), h('i.grip.r', { dataset: { role: 'sec-r', id: s.id } })));
+    }
+    for (const m of state.project.markers ?? []) {
+      tr.append(h('div.tl-marker', { dataset: { role: 'marker', id: m.id }, style: { left: `${xOf(m.f)}px` }, title: `${m.name || 'Marker'} — click to jump, double-click to rename, right-click for more` },
+        h('i.mk-flag'), m.name ? h('span.mk-name', m.name) : null));
     }
     tr.append(...gridEls('ruler'));
     r.append(tr);
@@ -306,6 +311,12 @@ export function createTimelinePanel(shell) {
     input.select();
   }
 
+  function markerName(m) {
+    const input = h('input.text-input', { value: m.name, placeholder: 'Marker name', 'aria-label': 'Marker name' });
+    dialog({ title: 'Marker', body: [input], actions: [{ label: 'Cancel' }, { label: 'Save', variant: 'filled', run: () => core.editMarker(m.id, { name: input.value.trim() }, 'Rename marker') }] });
+    input.select();
+  }
+
   function sectionMenu(e, s) {
     showMenu({ x: e.clientX, y: e.clientY }, [
       { label: 'Rename / color…', icon: 'edit', run: () => nameDialog({ ...s }) },
@@ -349,6 +360,7 @@ export function createTimelinePanel(shell) {
     const hit = roleOf(e);
     const f0 = frameAt(e.clientX);
     scroller.focus({ preventScroll: true });
+    if (hit?.role === 'marker') { const m = state.project.markers.find((x) => x.id === hit.d.id); if (m) core.seek(m.f); return; }
     if (!hit || hit.role === 'track' || hit.role === 'ruler' || hit.role === 'clip' || hit.role === 'mini') {
       if (hit?.d.id) core.select(hit.d.id);
       if (e.shiftKey && hit?.role === 'track') {
@@ -479,6 +491,7 @@ export function createTimelinePanel(shell) {
     } else if (hit.role === 'sec') { const s = state.project.sections.find((x) => x.id === hit.d.id); if (s) nameDialog({ ...s }); }
     else if (hit.role === 'ruler') core.addSection(Math.round(frameAt(e.clientX)));
     else if (hit.role === 'kf') core.seek(Number(hit.d.f));
+    else if (hit.role === 'marker') { const m = state.project.markers.find((x) => x.id === hit.d.id); if (m) markerName(m); }
   });
 
   content.addEventListener('contextmenu', (e) => {
@@ -490,7 +503,10 @@ export function createTimelinePanel(shell) {
       const id = `${hit.d.id}|${hit.d.prop}|${hit.d.f}`;
       if (!selKeys.has(id)) { selKeys.clear(); selKeys.set(id, { element: hit.d.id, property: hit.d.prop, f: Number(hit.d.f) }); render(); }
       kfMenu(e);
-    } else if (hit.role === 'ruler') showMenu({ x: e.clientX, y: e.clientY }, [{ label: 'Add section here', icon: 'flag', run: () => core.addSection(Math.round(frameAt(e.clientX))) }]);
+    } else if (hit.role === 'marker') {
+      const m = state.project.markers.find((x) => x.id === hit.d.id); if (!m) return;
+      showMenu({ x: e.clientX, y: e.clientY }, [{ label: 'Rename…', icon: 'edit', run: () => markerName(m) }, { label: 'Move to playhead', run: () => core.editMarker(m.id, { f: state.frame }, 'Move marker') }, { separator: true }, { label: 'Delete marker', icon: 'delete', run: () => core.removeMarker(m.id) }]);
+    } else if (hit.role === 'ruler') showMenu({ x: e.clientX, y: e.clientY }, [{ label: 'Add section here', icon: 'flag', run: () => core.addSection(Math.round(frameAt(e.clientX))) }, { label: 'Add marker here', icon: 'bookmark', run: () => core.addMarker(Math.round(frameAt(e.clientX))) }]);
   });
 
   // long-press = right-click on touch

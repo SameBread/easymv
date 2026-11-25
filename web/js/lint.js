@@ -2,14 +2,14 @@
 // so a typo like ::dcoe or motion=bunce shows up instead of quietly doing nothing.
 // Pure: lintScript(text, { songSec, tempo }) -> [{ line, from, to, severity: 'error'|'warn'|'info', msg, fix? }]
 
-import { LAYOUT_IDS, TRANSITION_IDS, PACK_IDS, DECO_NAMES, FX_NAMES, MOTION_IDS } from './kinetic.js';
+import { LAYOUT_IDS, TRANSITION_IDS, PACK_IDS, DECO_NAMES, FX_NAMES, LOOK_NAMES, MOTION_IDS } from './kinetic.js';
 
 export const DIRECTIVES = {
   align: ['left', 'center', 'right'], amp: 'number', at: 'any', bg: 'color', bgstyle: 'any', deco: 'deco', dur: 'number', emph: ['bar', 'color', 'none'],
-  fx: 'fx', layout: LAYOUT_IDS, motion: MOTION_IDS, out: 'out', pal: 'number', reveal: ['auto', 'word', 'line'], speed: 'number', style: PACK_IDS,
+  fx: 'fx', layout: LAYOUT_IDS, look: 'look', motion: MOTION_IDS, out: 'out', pal: 'number', reveal: ['auto', 'word', 'line'], speed: 'number', style: PACK_IDS,
   sync: ['beat', 'none'], trans: TRANSITION_IDS,
 };
-export const OPTIONS = { pack: PACK_IDS, energy: 'number', seed: 'number', font: 'any', layouts: 'any', place: 'any', at: 'any', deco: 'deco', fx: 'fx', amp: 'number', speed: 'number', sync: ['beat', 'none'] };
+export const OPTIONS = { pack: PACK_IDS, energy: 'number', seed: 'number', font: 'any', layouts: 'any', place: 'any', at: 'any', deco: 'deco', look: 'look', fx: 'fx', amp: 'number', speed: 'number', sync: ['beat', 'none'] };
 const MOD_KV = { size: 'number', color: 'color', colour: 'color', at: 'any', step: 'number', delay: 'number', motion: MOTION_IDS, align: ['left', 'center', 'centre', 'right'], anchor: ['top', 'middle', 'bottom'], max: 'number', role: 'any', fx: 'fx', sync: ['beat', 'none'], amp: 'number', speed: 'number', bold: 'any', italic: 'any', underline: 'any', strike: 'any' };
 const MOD_BARE = new Set(['big', 'small', 'accent', 'dim', 'fg', ...FX_NAMES]);
 
@@ -35,6 +35,10 @@ function checkValue(kind, value, ctx, push) {
   if (kind === 'color') { if (!isColor(v)) push(`“${v}” is not a colour (use #rrggbb, accent, dim or fg)`); return; }
   if (kind === 'out') { if (!(isNum(v) || /^(cut|none)$/i.test(v))) push('use a number of seconds, or cut'); return; }
   if (kind === 'fx') { for (const n of v.split(/[+|,\s]+/).filter(Boolean)) if (!FX_NAMES.includes(n.toLowerCase()) && n.toLowerCase() !== 'none') { const c = closest(n, FX_NAMES); push(`unknown effect “${n}”${c ? ` — did you mean ${c}?` : ''}`, c ? { label: `Use ${c}`, from: n, to: c } : null); } return; }
+  if (kind === 'look') {
+    for (const n of v.split(/[\s,+]+/).filter(Boolean)) if (n.toLowerCase() !== 'none' && !LOOK_NAMES.includes(n.toLowerCase())) { const c = closest(n, LOOK_NAMES); push(`unknown look “${n}”${c ? ` — did you mean ${c}?` : ''}`, c ? { label: `Use ${c}`, from: n, to: c } : null); }
+    return;
+  }
   if (kind === 'deco') {
     const names = v.split(/[\s,+]+/).filter((x) => x && !/^(colou?r|w|width)[=:]/i.test(x));
     for (const n of names) if (n.toLowerCase() !== 'none' && !DECO_NAMES.includes(n.toLowerCase())) { const c = closest(n, DECO_NAMES); push(`unknown decoration “${n}”${c ? ` — did you mean ${c}?` : ''}`, c ? { label: `Use ${c}`, from: n, to: c } : null); }
@@ -152,7 +156,7 @@ export function suggest(lineText, col) {
   if ((m = /^\s*@(\w*)$/.exec(before))) return { prefix: m[1], replace: '@' + m[1], items: Object.keys(OPTIONS).filter((k) => k.startsWith(m[1].toLowerCase())).map((k) => ({ label: `@${k}`, insert: `@${k} ` })) };
   if ((m = /^\s*::(\w+)\s+([\w+\-]*)$/.exec(before))) {
     const key = m[1].toLowerCase(); const spec = DIRECTIVES[key]; const part = m[2];
-    const pool = Array.isArray(spec) ? spec : spec === 'fx' ? FX_NAMES : spec === 'deco' ? DECO_NAMES : [];
+    const pool = Array.isArray(spec) ? spec : spec === 'fx' ? FX_NAMES : spec === 'deco' ? DECO_NAMES : spec === 'look' ? LOOK_NAMES : [];
     const head = part.includes('+') ? part.slice(0, part.lastIndexOf('+') + 1) : ''; const tail = part.slice(head.length);
     return { prefix: tail, replace: part, items: pool.filter((x) => x.startsWith(tail.toLowerCase())).map((x) => ({ label: x, insert: head + x })) };
   }

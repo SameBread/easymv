@@ -180,6 +180,41 @@ class TextureCache {
   }
 }
 
+
+// ---- text looks (::look outline | shadow | glow | neon | gradient | extrude) ----
+const isDark = (c) => { const m = /^#?([0-9a-f]{6})$/i.exec(String(c).trim()); if (!m) return false; const n = parseInt(m[1], 16); return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) < 110; };
+function shiftHue(c, deg) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(c).trim()); if (!m) return c;
+  const n = parseInt(m[1], 16); const r = (n >> 16) / 255; const g = ((n >> 8) & 255) / 255; const b = (n & 255) / 255;
+  const mx = Math.max(r, g, b); const mn = Math.min(r, g, b); const l = (mx + mn) / 2; const d = mx - mn;
+  let hh = 0; const sat = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  if (d) hh = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return `hsl(${Math.round(((hh * 60 + deg) % 360 + 360) % 360)} ${Math.round(Math.max(sat, 0.55) * 100)}% ${Math.round(Math.min(Math.max(l, 0.5), 0.7) * 100)}%)`;
+}
+function lookGradient(k, color, cy, px) {
+  const gr = k.createLinearGradient(0, cy - px * 0.6, 0, cy + px * 0.6);
+  gr.addColorStop(0, shiftHue(color, 55)); gr.addColorStop(1, shiftHue(color, -35));
+  return gr;
+}
+/** Everything drawn BEHIND the letters for a look; the caller then fills the letters themselves. */
+function paintLook(k, text, x, y, px, color, look, w, h) {
+  const has = (n) => look.includes(n);
+  k.save(); k.lineJoin = 'round';
+  if (has('extrude')) {
+    const dark = isDark(color) ? 'rgba(255,255,255,.55)' : 'rgba(0,0,0,.55)'; const step = Math.max(1, px * 0.025);
+    k.fillStyle = dark; for (let i = Math.round(px * 0.12 / step); i >= 1; i--) k.fillText(text, x + i * step * 0.7, y + i * step);
+  }
+  if (has('glow') || has('neon')) {
+    const gc = isDark(color) ? '#ffffff' : color;     // dark letters (on a highlight bar) glow white so the glow is visible
+    k.shadowColor = gc; k.fillStyle = gc;
+    for (const [blur, a] of has('neon') ? [[0.5, 0.6], [0.25, 0.8], [0.1, 1]] : [[0.4, 0.55], [0.18, 0.7]]) { k.shadowBlur = px * blur; k.globalAlpha = a; k.fillText(text, x, y); }
+    k.globalAlpha = 1; k.shadowBlur = 0; k.shadowColor = 'transparent';
+  }
+  if (has('outline')) {
+    k.strokeStyle = isDark(color) ? '#ffffff' : '#000000'; k.lineWidth = Math.max(2, px * 0.09); k.strokeText(text, x, y);
+  }
+  k.restore();
+}
 export class Renderer {
   constructor(canvas, { width, height, budgetMB = 512 } = {}) {
     this.canvas = canvas;
@@ -569,21 +604,25 @@ export class Renderer {
     const f = frameAt(c, it.time, { pulse: pulse * (def.script?.pulse ?? 1) });
     for (const pass of f.passes) for (const r of pass.runs) {
       const px = Math.max(8, Math.round(r.size));
-      const sh = r.shadow ? Math.round(r.shadow * 10) / 10 : 0;
+      const sh = Math.max(r.shadow ? Math.round(r.shadow * 10) / 10 : 0, String(r.look ?? '').includes('shadow') ? 0.9 : 0);
       const sk = r.st ? `${r.st.i ? 'i' : ''}${r.st.u ? 'u' : ''}${r.st.s ? 's' : ''}` : '';
-      r.key = `scr|${r.text}|${r.font}|${r.weight}|${r.color}|${px}|${sh}|${sk}`;
+      const lk = r.look ?? '';
+      r.key = `scr|${r.text}|${r.font}|${r.weight}|${r.color}|${px}|${sh}|${sk}|${lk}`;
       if (this.textTex.has(r.key)) { const e = this.textTex.get(r.key); this.textTex.delete(r.key); this.textTex.set(r.key, e); continue; }
       const font = migrateFont(r.font);
       const g = document.createElement('canvas').getContext('2d');
       const css = `${r.st?.i ? 'italic ' : ''}${nearestWeight(font, r.weight)} ${px}px ${familyCss(font)}`;
       g.font = css;
-      const pad = Math.ceil(px * (0.2 + 0.35 * sh));
+      const pad = Math.ceil(px * (0.2 + 0.35 * sh + (/glow|neon/.test(lk) ? 0.5 : 0) + (/outline|extrude/.test(lk) ? 0.15 : 0)));
       const w = Math.ceil(g.measureText(r.text).width + pad * 2); const h = Math.ceil(px * 1.3 + pad * 2);
       const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
       const k = cv.getContext('2d'); k.font = css; k.textAlign = 'center'; k.textBaseline = 'middle'; k.fillStyle = r.color;
+      const cy = h / 2 + px * 0.04;
+      if (lk) paintLook(k, r.text, w / 2, cy, px, r.color, lk, w, h);
       if (sh > 0) { k.shadowColor = 'rgba(0,0,0,0.75)'; k.shadowBlur = px * 0.22 * sh + 1; k.shadowOffsetY = px * 0.05 * sh; }
-      k.fillText(r.text, w / 2, h / 2 + px * 0.04);
-      if (sh > 0.3) k.fillText(r.text, w / 2, h / 2 + px * 0.04);
+      k.fillStyle = lk.includes('gradient') ? lookGradient(k, r.color, cy, px) : lk.includes('neon') ? '#ffffff' : r.color;
+      k.fillText(r.text, w / 2, cy);
+      if (sh > 0.3) k.fillText(r.text, w / 2, cy);
       if (r.st?.u || r.st?.s) {   // underline / strike-through, drawn as rules so they match the glyph colour and weight
         const tw = g.measureText(r.text).width; const th = Math.max(1, px * 0.06);
         k.shadowColor = 'transparent';

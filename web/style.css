@@ -510,3 +510,17 @@ textarea.script-text.se-ta::selection { background: color-mix(in srgb, var(--md-
 .se-issue.error .icon, .se-issue.warn .icon { color: #d9a100; }
 .se-issue.error .icon { color: #d33; }
 .se-more { font-size: 11px; color: var(--md-on-surface-variant); }
+
+/* timeline markers */
+.tl-marker { position: absolute; top: 0; height: 100%; width: 0; z-index: 3; cursor: pointer; }
+.tl-marker .mk-flag { position: absolute; left: -5px; top: 0; width: 10px; height: 14px; background: var(--md-tertiary, #e0a); clip-path: polygon(0 0, 100% 0, 100% 70%, 50% 100%, 0 70%); }
+.tl-marker::after { content: ''; position: absolute; left: 0; top: 14px; bottom: -400px; width: 1px; background: color-mix(in srgb, var(--md-tertiary, #e0a) 45%, transparent); pointer-events: none; }
+.tl-marker .mk-name { position: absolute; left: 7px; top: 0; font-size: 10px; line-height: 14px; white-space: nowrap; color: var(--md-on-surface); background: color-mix(in srgb, var(--md-surface) 70%, transparent); padding: 0 3px; border-radius: 3px; }
+
+.hist-list { list-style: none; margin: 0; padding: 0; max-height: 50vh; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.hist-item { display: flex; gap: 10px; width: 100%; align-items: center; text-align: left; padding: 6px 10px; border: 0; border-radius: 8px; background: none; color: var(--md-on-surface); font: inherit; font-size: 13px; cursor: pointer; }
+.hist-item:hover { background: var(--md-surface-container-highest); }
+.hist-n { width: 2.5em; color: var(--md-on-surface-variant); font-variant-numeric: tabular-nums; }
+.hist-list li.now .hist-item { background: var(--md-primary-container); color: var(--md-on-primary-container); font-weight: 600; }
+.hist-list li.redo .hist-item { opacity: .5; }
+.hist-now { margin-left: auto; font-size: 11px; }

@@ -14,6 +14,7 @@ export const SCRIPT_DEFAULTS = {
   reveal: 'auto',         // 'auto' springy stagger, 'word' spread words across the line time, 'line' whole line at once
   place: 'full',          // 'full' | 'lower' | 'middle' | 'upper'
   layouts: 'all',         // 'all' | 'calm' (centre, left, diagonal only)
+  look: 'none',           // how the letters are drawn (see LOOK_NAMES): outline, glow, neon... 'none' by default; text can override with ::look / @look
   deco: 'none',           // decorations around the text (see DECO_NAMES): 'none' by default; text can override with ::deco / @deco
   shadow: 0,              // 0..1 soft shadow behind text (helps on busy backgrounds)
   pulse: 1,
@@ -54,7 +55,7 @@ export function compileFor(def, W, H, total, measure = measureText) {
     c = compileScript(parseScript(s.text), { W, H, measure, pack: s.pack, energy: s.energy, seed: s.seed,
       fontHead: s.fontHead || undefined, fontBody: s.fontBody || undefined, total: s.fit === 'project' ? total : undefined,
       bgMode: s.bgMode, bgColor: s.bgColor, fg: s.fg || undefined, accent: s.accent || undefined,
-      reveal: s.reveal, place: s.place, layoutSet: s.layouts, shadow: s.shadow, deco: s.deco, tempo });
+      reveal: s.reveal, place: s.place, layoutSet: s.layouts, shadow: s.shadow, deco: s.deco, look: s.look, tempo });
     cache.set(key, c);
     if (cache.size > 12) cache.delete(cache.keys().next().value);
   }

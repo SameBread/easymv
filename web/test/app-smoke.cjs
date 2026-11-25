@@ -484,6 +484,35 @@ const srv = http.createServer((q, s) => {
     await E(() => easymv.core.markSaved()); await pg.waitForTimeout(300);
     check('recovery: saving clears the snapshot', (await E(() => easymv.core.checkRecovery())) === null);
 
+    // click text in the preview -> jump to its script line
+    await E(async () => { const c = easymv.core; const id = c.state.project.elements.filter((x) => x.type === 'script').at(-1).id; c.select(id);
+      c.setScript?.(id, (x) => { x.text = '@look neon\n// c\n[0:00.5] Alpha beta\n\n[0:02] Gamma delta'; x.mode = 'lyrics'; }, 'test', 'tt'); });
+    await E(() => { easymv.core.seek(Math.round(1.2 * easymv.core.fps())); });
+    await pg.waitForTimeout(800);
+    const hitPt = await E(() => { const sid = easymv.core.state.project.elements.filter((x) => x.type === 'script').at(-1).id; const it = easymv.core.state.lastPlan?.find((x) => x.asset.def.id === sid && x.scr); if (!it) return null; const r = it.scr.passes.flatMap((p) => p.runs).find((r) => r.srcLine === 2 && r.alpha > 0.3); if (!r) return { none: it.scr.passes.map((p) => p.runs.map((r) => [r.text, r.srcLine, r.alpha])) }; const cv = document.querySelector('.panel-preview canvas').getBoundingClientRect(); const c = document.querySelector('.panel-preview canvas'); return { x: cv.left + (r.x / c.width) * cv.width, y: cv.top + (r.y / c.height) * cv.height, look: r.look }; });
+    check('preview: runs carry their script line and look', !!hitPt && hitPt.x != null && hitPt.look === 'neon', JSON.stringify(hitPt));
+    if (hitPt?.x != null) {
+      await pg.mouse.dblclick(hitPt.x, hitPt.y);
+      await until(() => document.querySelector('.panel-script .se-ta') && document.activeElement === document.querySelector('.panel-script .se-ta'));
+      const sel = await E(() => { const t = document.querySelector('.panel-script .se-ta'); return t.value.slice(t.selectionStart, t.selectionEnd); });
+      check('preview: double-click on text selects its script line', /Alpha beta/.test(sel), JSON.stringify(sel));
+    }
+
+    // markers + history
+    const mk = await E(async () => { const c = easymv.core; c.seek(10); const m = c.addMarker(); c.seek(40); c.addMarker(40, 'Drop'); c.seek(0); const next = c.seekMarker(1); const f1 = c.state.frame; c.seekMarker(1); const f2 = c.state.frame; c.seekMarker(-1); const f3 = c.state.frame; return { n: c.state.project.markers.length, f1, f2, f3, same: c.addMarker(10).id === m.id }; });
+    check('markers: add, dedupe and jump next/previous', mk.n === 2 && mk.f1 === 10 && mk.f2 === 40 && mk.f3 === 10 && mk.same, JSON.stringify(mk));
+    await until(() => document.querySelectorAll('.tl-marker').length === 2);
+    check('markers: flags show on the ruler', true);
+    await E(() => easymv.core.undo()); await E(() => new Promise((r) => setTimeout(r, 300)));
+    check('markers: undo removes the last marker change', (await E(() => easymv.core.state.project.markers.length)) <= 2);
+    await menu('Edit', 'History…');
+    check('history dialog lists steps', (await n('dialog[open] .hist-item')) >= 3 && (await n('dialog[open] .hist-now')) === 1);
+    const histLen = await E(() => easymv.core.historyEntries().length);
+    await pg.locator('dialog[open] .hist-item').last().click(); await pg.waitForTimeout(600);
+    check('history: clicking the oldest step goes back to it', (await E(() => easymv.core.historyEntries().findIndex((e) => e.current))) === 0 && histLen > 2);
+    await pg.keyboard.press('Escape');
+    await E(() => easymv.core.jumpHistory(easymv.core.historyEntries().length - 1)); await pg.waitForTimeout(600);
+
     // Export dialog opens and mentions size
     await E(async () => { if (!easymv.core.state.bridge) { easymv.core.setMaster(new File([new Uint8Array(64)], 's.wav', { type: 'audio/wav' })); await easymv.core.analyze(); } });
     await until(() => easymv.core.state.bridge);

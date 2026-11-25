@@ -15,12 +15,12 @@ test('quiet debounces but never starves', async () => {
   await new Promise((r) => setTimeout(r, 120));
   assert.ok(n >= 1 && n <= 3, `ran ${n} times`);
 });
-test('file limit is sane and project version is current', () => { assert.ok(FILE_LIMIT > 1e8); assert.equal(PROJECT_VERSION, 6); });
+test('file limit is sane and project version is current', () => { assert.ok(FILE_LIMIT > 1e8); assert.equal(PROJECT_VERSION, 7); });
 
 test('upgrade brings a v5 project to v6 and drops dangling folder references', () => {
   const p = { version: 5, elements: [{ id: 'a', group: 'gone' }, { id: 'm', type: 'deck', deck: { script: 'x', slides: [{ art: 'a', objects: ['a', 'nope'] }, { art: 'zzz', objects: [] }] } }] };
   upgrade(p);
-  assert.equal(p.version, 6); assert.equal(p.tempo, null); assert.equal(p.elements[0].group, undefined);
+  assert.equal(p.version, 7); assert.equal(p.tempo, null); assert.equal(p.elements[0].group, undefined);
   assert.equal(p.elements[1].deck.script, null); assert.deepEqual(p.elements[1].deck.slides[0].objects, ['a']); assert.equal(p.elements[1].deck.slides[1].art, null);
 });
 test('upgrade normalises tempo and flags newer files', () => {

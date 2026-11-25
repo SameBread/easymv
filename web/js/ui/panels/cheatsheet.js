@@ -55,6 +55,8 @@ const SECTIONS = [
     [INSTR, '::deco bar', 'A line beside the text'],
     [INSTR, '::deco underline+brackets', 'Combine with +'],
     [INSTR, '::deco box color=#ffcc00 w=2', 'Set the colour and thickness (w = 0.3 to 6)'],
+    [INSTR, '::look glow', 'How the letters are drawn: outline, shadow, glow, neon, gradient, extrude (combine with +)'],
+    [INSTR, '@look outline+shadow', 'Same, for every scene (put at the top)'],
     [INSTR, '::deco none', 'Remove it from this scene'],
     [INSTR, '@deco rules', 'Every scene (put at the top). Also set in Look → Text → Decoration'],
   ], chips: [['Decorations', DECO_NAMES]] },

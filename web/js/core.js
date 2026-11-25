@@ -149,6 +149,7 @@ export function newProject() {
     tracks: [],
     sections: [],
     tempo: null,           // { bpm, offset, sig, changes } or null (see tempo.js)
+    markers: [],           // [{ id, f (frame), name }]: flags on the timeline ruler
   };
 }
 
@@ -173,7 +174,7 @@ export function normalize(p) {
 
 /** Project as the engine should see it (UI-only data removed). */
 export function strip(p) {
-  const { sections, lengthSec, tempo, ...rest } = p;
+  const { sections, lengthSec, tempo, markers, ...rest } = p;
   return {
     ...rest,
     // the engine only routes numbers: render-only choices (blend mode, script type) are hidden from it so an older engine build still accepts them
@@ -187,7 +188,7 @@ export function strip(p) {
 function snapshot() {
   const p = state.project;
   const clean = (e) => { const { _error, ...rest } = e; return rest; };
-  return JSON.stringify({ videoFps: p.videoFps, resolution: p.resolution, elements: p.elements.map(clean), connections: p.connections, tracks: p.tracks, sections: p.sections, tempo: p.tempo ?? null });
+  return JSON.stringify({ videoFps: p.videoFps, resolution: p.resolution, elements: p.elements.map(clean), connections: p.connections, tracks: p.tracks, sections: p.sections, tempo: p.tempo ?? null, markers: p.markers ?? [] });
 }
 
 export const canUndo = () => history.canUndo;
@@ -245,7 +246,7 @@ async function restore(snapStr) {
   const snap = JSON.parse(snapStr);
   const p = state.project;
   const resChanged = snap.resolution[0] !== p.resolution[0] || snap.resolution[1] !== p.resolution[1];
-  Object.assign(p, { videoFps: snap.videoFps, resolution: snap.resolution, elements: snap.elements, connections: snap.connections, tracks: snap.tracks, sections: snap.sections, tempo: snap.tempo ?? null });
+  Object.assign(p, { videoFps: snap.videoFps, resolution: snap.resolution, elements: snap.elements, connections: snap.connections, tracks: snap.tracks, sections: snap.sections, tempo: snap.tempo ?? null, markers: snap.markers ?? [] });
   setScriptTempo(p.tempo);
   normalize(p);
   await syncAssets();
@@ -264,6 +265,12 @@ function step(kind) {
     toast(`${kind === 'undo' ? 'Undid' : 'Redid'}: ${r.label}`);
   }).catch((e) => fatal(`${kind} failed: ${e.message ?? e}`));
   return chain;
+}
+export const historyEntries = () => history.entries();
+/** Jump to any step of the history by index (see historyEntries). */
+export async function jumpHistory(i) {
+  const n = history.offsetTo(i);
+  for (let k = 0; k < Math.abs(n); k++) await step(n < 0 ? 'undo' : 'redo');
 }
 export const undo = () => step('undo');
 export const redo = () => step('redo');
@@ -841,6 +848,27 @@ export function tempoGrid(div, f0, f1) {
 export { tapTempo, beatAt, timeAt, snapSeconds, noteBeats, firstBeatAfter };
 void tempoSnapshot;
 
+// ---------- markers ----------
+
+const markerSort = () => state.project.markers.sort((a, b) => a.f - b.f);
+export function addMarker(f = state.frame, name = '') {
+  const p = state.project; p.markers ??= [];
+  const ex = p.markers.find((m) => m.f === Math.round(f)); if (ex) return ex;
+  const m = { id: `mk${Date.now().toString(36)}${p.markers.length}`, f: Math.max(0, Math.round(f)), name };
+  p.markers.push(m); markerSort(); structural(); commit('Add marker'); return m;
+}
+export function editMarker(id, patch, label = 'Edit marker', key = null) {
+  const m = state.project.markers?.find((x) => x.id === id); if (!m) return;
+  Object.assign(m, patch); if ('f' in patch) m.f = Math.max(0, Math.round(m.f)); markerSort(); structural(); commit(label, key);
+}
+export function removeMarker(id) { state.project.markers = (state.project.markers ?? []).filter((m) => m.id !== id); structural(); commit('Delete marker'); }
+/** Jump to the next (dir 1) or previous (-1) marker. */
+export function seekMarker(dir) {
+  const ms = state.project.markers ?? []; const f = state.frame;
+  const m = dir > 0 ? ms.find((x) => x.f > f) : [...ms].reverse().find((x) => x.f < f);
+  if (m) seek(m.f); return !!m;
+}
+
 export function addSection(start = state.frame, length = Math.round(fps() * 8)) {
   const p = state.project;
   const n = p.sections.length;
@@ -1317,10 +1345,11 @@ export async function exportVideo() {
     stop();
     const p = state.project;
     const info = state.bridge.masterInfo;
-    const probe = await probeCodecs({ width: p.resolution[0], height: p.resolution[1], fps: p.videoFps, sampleRate: info.sampleRate, channels: info.channels });
+    const quality = state.prefs.exportQuality ?? 'standard';
+    const probe = await probeCodecs({ width: p.resolution[0], height: p.resolution[1], fps: p.videoFps, sampleRate: info.sampleRate, channels: info.channels, quality });
     const dur = state.bridge.totalFrames / p.videoFps;
     if (typeof window.showSaveFilePicker !== 'function') {
-      const est = estimateOutputBytes({ width: p.resolution[0], height: p.resolution[1], fps: p.videoFps, durationSec: dur });
+      const est = estimateOutputBytes({ width: p.resolution[0], height: p.resolution[1], fps: p.videoFps, durationSec: dur, quality });
       const limit = isLikelyMobile() ? 300 * MB : 1500 * MB;
       if (dur > EXPORT_WARN_SECONDS || est > limit) {
         const lower = isLikelyMobile() ? ' Consider a smaller resolution such as 1280×720 or 720×1280.' : '';
@@ -1537,7 +1566,7 @@ export function applyDeck(id, label = 'Retime slideshow') {
     const first = deck.slides[live[0] ?? idxs[0]];
     const solid = idxs.every((i) => deck.slides[i].solid);
     const trans = !anim || solid ? 'cut' : (first?.trans ?? deck.trans);
-    const mo = artMotion(live.map((i) => [sp.slides[i].t0, sp.slides[i].t1]), trans, deck.fade);
+    const mo = artMotion(live.map((i) => [sp.slides[i].t0, sp.slides[i].t1]), trans, deck.fade, anim ? deck.kenBurns : 'off');
     setVis(lid, mo.visible);
     for (const [prop, keys] of Object.entries(mo.tracks)) push(lid, prop, keys);
   }
@@ -1579,7 +1608,7 @@ export async function importImagesAsDeck(files, { name = 'Slideshow', timing = {
   await pushLayers(defs, 'Add slideshow images', false);
   const songSec = state.bridge ? totalFrames() / fps() : 0;
   const mid = uniqueId(`slideshow_${slug(name)}`, takenIds());
-  const deck = { ...DECK_DEFAULTS, name, animate, scriptHead: '@pack editorial', script: null, slides: slidesModel, mode: songSec ? 'even' : 'fixed', ...timing };
+  const deck = { ...DECK_DEFAULTS, name, animate, kenBurns: 'auto', scriptHead: '@pack editorial', script: null, slides: slidesModel, mode: songSec ? 'even' : 'fixed', ...timing };
   await pushLayers([{ id: mid, type: 'deck', name: `${name} (slideshow)`, deck }], 'Add slideshow', false);
   for (const d of defs) layerById(d.id).group = mid;
   gatherDeck(mid); await syncAssets();

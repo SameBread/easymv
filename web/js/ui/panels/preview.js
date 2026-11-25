@@ -180,6 +180,19 @@ export function createPreviewPanel(shell) {
     } else if (tool === 'move') drag = { kind: 'move' };   // Godot-style: the move tool drags the selection from anywhere
     else drag = null;
   });
+  // double-click on script text: select that script layer and jump to the line that made the word
+  stage.addEventListener('dblclick', (e) => {
+    const [px, py] = toCanvas(e);
+    const items = (state.lastPlan ?? []).filter((x) => x.asset.def.type === 'script' && x.scr).reverse();
+    for (const it of items) {
+      for (const pass of [...it.scr.passes].reverse()) {
+        const run = pass.runs.filter((r) => r.srcLine != null && !r.deco && r.alpha > 0.1).find((r) => {
+          const w = (r.w ?? String(r.text).length * r.size * 0.55) * 0.55 + r.size * 0.2; return Math.abs(px - r.x) <= w && Math.abs(py - r.y) <= r.size * 0.65;
+        });
+        if (run) { core.select(it.asset.def.id); shell.showPanel?.('script'); setTimeout(() => shell.scriptJump?.(run.srcLine), 30); e.preventDefault(); return; }
+      }
+    }
+  });
   stage.addEventListener('pointermove', (e) => {
     if (!editing() || !state.selected) return;
     const [px, py] = toCanvas(e);

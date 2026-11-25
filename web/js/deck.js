@@ -28,7 +28,8 @@ export const DECK_MODES = [
 export const DECK_TRANS = [
   ['fade', 'Crossfade'], ['dissolve', 'Dissolve'], ['zoom', 'Zoom in'], ['push', 'Push left'], ['rise', 'Rise up'], ['cut', 'Cut'],
 ];
-export const DECK_DEFAULTS = { start: 0, end: null, mode: 'reading', fixed: 5, beats: 8, fade: 0.4, trans: 'fade', scriptHead: '@pack editorial', script: null, slides: [] };
+export const KEN_BURNS = [['off', 'Off'], ['in', 'Slow zoom in'], ['out', 'Slow zoom out'], ['pan', 'Slow pan'], ['auto', 'Mixed (varies per slide)']];
+export const DECK_DEFAULTS = { start: 0, end: null, mode: 'reading', fixed: 5, beats: 8, fade: 0.4, kenBurns: 'off', trans: 'fade', scriptHead: '@pack editorial', script: null, slides: [] };
 export const deckSettings = (d) => ({ ...DECK_DEFAULTS, ...d, slides: d?.slides ?? [] });
 
 const MIN_DUR = 0.4;
@@ -120,12 +121,25 @@ export function buildDeckScript(deckIn, spans) {
  * Keyframes for one piece of slide artwork. `spans` are [t0, t1] in seconds (one per slide that uses it).
  * Returns { visible: [[t0, t1]…], tracks: { property: keys[] } } in seconds; the caller converts to frames.
  */
-export function artMotion(spans, trans, fade = 0.4) {
+export function artMotion(spans, trans, fade = 0.4, kenBurns = 'off', amount = 0.12) {
   const vis = []; const tr = { opacity: [], scale: [], positionX: [], positionY: [] };
   const key = (arr, t, v) => arr.push({ t, v });
-  for (const [a, b] of spans) {
-    if (trans === 'cut') { vis.push([a, b]); continue; }
-    const tail = trans === 'push' || trans === 'rise' ? fade * 1.25 : fade;
+  const moving = trans !== 'push' && trans !== 'rise';
+  spans.forEach(([a, b], idx) => {
+    // Ken Burns: a slow drift across the whole time the picture is up. 'auto' rotates through the styles per slide.
+    const kb = kenBurns === 'auto' ? ['in', 'pan', 'out', 'pan'][idx % 4] : kenBurns;
+    const tail = trans === 'push' || trans === 'rise' ? fade * 1.25 : trans === 'cut' ? 0 : fade;
+    const end = b + tail;
+    let s0 = 1; let s1 = 1; let p0 = null; let p1 = null;
+    if (kb === 'in') { s0 = 1; s1 = 1 + amount; }
+    else if (kb === 'out') { s0 = 1 + amount; s1 = 1; }
+    else if (kb === 'pan') { s0 = s1 = 1 + amount * 0.8; const dir = idx % 2 ? -1 : 1; p0 = 0.5 - dir * amount * 0.3; p1 = 0.5 + dir * amount * 0.3; }
+    const kbOn = kb && kb !== 'off' && moving;
+    if (trans === 'cut') {
+      vis.push([a, b]);
+      if (kbOn) { key(tr.scale, a, s0); key(tr.scale, b, s1); if (p0 != null) { key(tr.positionX, a, p0); key(tr.positionX, b, p1); } }
+      return;
+    }
     vis.push([a, b + tail]);
     if (trans === 'push') {
       key(tr.positionX, a, 1.5); key(tr.positionX, a + fade * 1.25, 0.5); key(tr.positionX, Math.max(a + fade * 1.25, b), 0.5); key(tr.positionX, b + tail, -0.5);
@@ -133,10 +147,15 @@ export function artMotion(spans, trans, fade = 0.4) {
       key(tr.positionY, a, 1.5); key(tr.positionY, a + fade * 1.25, 0.5); key(tr.positionY, Math.max(a + fade * 1.25, b), 0.5); key(tr.positionY, b + tail, -0.5);
     } else {
       key(tr.opacity, a, 0); key(tr.opacity, a + fade, 1); key(tr.opacity, Math.max(a + fade, b), 1); key(tr.opacity, b + fade, 0);
-      if (trans === 'zoom') { key(tr.scale, a, 1.18); key(tr.scale, a + fade * 1.6, 1); key(tr.scale, b + fade, 1.04); }
+      if (kbOn) {
+        const settle = Math.min(a + fade * 1.6, end - 0.01);
+        if (trans === 'zoom') { key(tr.scale, a, s0 * 1.18); key(tr.scale, settle, s0 + (s1 - s0) * ((settle - a) / Math.max(0.01, end - a))); key(tr.scale, end, s1); }
+        else { key(tr.scale, a, s0); key(tr.scale, end, s1); }
+        if (p0 != null) { key(tr.positionX, a, p0); key(tr.positionX, end, p1); }
+      } else if (trans === 'zoom') { key(tr.scale, a, 1.18); key(tr.scale, a + fade * 1.6, 1); key(tr.scale, b + fade, 1.04); }
       else if (trans === 'fade') { key(tr.scale, a, 1); key(tr.scale, b + fade, 1.045); }
     }
-  }
+  });
   return { visible: vis, tracks: Object.fromEntries(Object.entries(tr).filter(([, v]) => v.length)) };
 }
 
