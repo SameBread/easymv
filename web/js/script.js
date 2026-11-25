@@ -1,6 +1,6 @@
 // Settings, presets, demos, compile cache and text measuring for "script" layers
 // (kinetic text for presentations, lyric videos and captions).
-import { parseScript, compileScript, PACKS } from './kinetic.js';
+import { parseScript, compileScript, PACKS, getScriptTempo } from './kinetic.js';
 import { familyCss, nearestWeight, migrateFont } from './fonts.js';
 
 export const SCRIPT_DEFAULTS = {
@@ -47,13 +47,14 @@ const cache = new Map();
 /** Compile (cached) for a canvas size. `total` is the project length in seconds when fit==='project'. */
 export function compileFor(def, W, H, total, measure = measureText) {
   const s = scriptSettings(def);
-  const key = JSON.stringify([s, W, H, s.fit === 'project' ? Math.round(total * 10) : 0]);
+  const tempo = getScriptTempo();
+  const key = JSON.stringify([s, W, H, s.fit === 'project' ? Math.round(total * 10) : 0, tempo]);
   let c = cache.get(key);
   if (!c) {
     c = compileScript(parseScript(s.text), { W, H, measure, pack: s.pack, energy: s.energy, seed: s.seed,
       fontHead: s.fontHead || undefined, fontBody: s.fontBody || undefined, total: s.fit === 'project' ? total : undefined,
       bgMode: s.bgMode, bgColor: s.bgColor, fg: s.fg || undefined, accent: s.accent || undefined,
-      reveal: s.reveal, place: s.place, layoutSet: s.layouts, shadow: s.shadow, deco: s.deco });
+      reveal: s.reveal, place: s.place, layoutSet: s.layouts, shadow: s.shadow, deco: s.deco, tempo });
     cache.set(key, c);
     if (cache.size > 12) cache.delete(cache.keys().next().value);
   }

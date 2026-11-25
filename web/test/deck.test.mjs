@@ -53,3 +53,11 @@ test('parseClock', () => {
   assert.equal(parseClock('1:23'), 83); assert.equal(parseClock('83.5'), 83.5); assert.ok(Number.isNaN(parseClock('x')));
   assert.equal(clockText(83), clockText(parseClock('1:23')));
 });
+
+test('beats mode: every slide is N beats and cuts land on the grid', () => {
+  const tempo = { bpm: 120, offset: 0.1, sig: 4 };
+  const sp = deckSpans({ mode: 'beats', beats: 4, start: 3.3, slides: slides(3) }, { songSec: 60, tempo });
+  near(sp.slides[0].t0, 3.1); near(sp.slides[0].t1 - sp.slides[0].t0, 2); near(sp.slides[2].t1, 9.1);
+  const nt = deckSpans({ mode: 'beats', beats: 4, fixed: 5, slides: slides(2) }, { songSec: 60 });
+  near(nt.total, 10, 1e-6);
+});

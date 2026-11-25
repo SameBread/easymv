@@ -12,6 +12,7 @@ import { probeCodecs, openOutput, runExport, estimateOutputBytes, isLikelyMobile
 import { History } from './history.js';
 import { applyPreset, demoElementDefs, demoFiles } from './presets.js';
 import { packBundle, unpackBundle } from './bundle.js';
+import { writeSnapshot, readSnapshot, clearSnapshot, hasContent, quiet } from './autosave.js';
 import { VIS_DEFAULTS, VIS_PRESETS } from './visualizer.js';
 import { FX_KINDS, FX_COMMON } from './effects.js';
 import { LYRIC_DEFAULTS, lyricsSettings } from './lyrics.js';
@@ -21,6 +22,9 @@ import { registerFont } from './textcanvas.js';
 import * as TL from './timeline.js';
 import { parsePptx, planSlides, planSlidesAuto, renderSlideArt } from './pptx.js';
 import { PROP_BY_NAME } from './props.js';
+import { setScriptTempo } from './kinetic.js';
+import { PROJECT_VERSION, upgrade } from './projectmodel.js';
+import { normTempo, detectTempo, tapTempo, beatAt, timeAt, snapSeconds, gridLines, noteBeats, firstBeatAfter } from './tempo.js';
 import { DECK_DEFAULTS, deckSettings, deckSpans, buildDeckScript, artMotion, objectMotion } from './deck.js';
 import { CHART_DEFAULTS, CHART_TYPES, TABLE_DEFAULTS, shapeLabel as shapeName } from './vector.js';
 import { SHAPE_DEFAULTS } from './vectorlayer.js';
@@ -54,6 +58,7 @@ export const state = {
   renderer: null,        // the preview renderer (the Preview panel owns the canvas)
   canvas: null,
   frame: 0,
+  dirty: false,          // unsaved changes since the last save or load
   playing: false,
   selected: null,        // selected layer id
   lastPlan: null,
@@ -132,7 +137,7 @@ export const LAYER_TYPE_INFO = {
 
 export function newProject() {
   return {
-    version: 5,
+    version: PROJECT_VERSION,
     videoFps: 30,
     analysisRate: 200,
     sampleRate: 44100,
@@ -143,6 +148,7 @@ export function newProject() {
     connections: [],
     tracks: [],
     sections: [],
+    tempo: null,           // { bpm, offset, sig, changes } or null (see tempo.js)
   };
 }
 
@@ -154,6 +160,8 @@ export function migrate(p) {
     p.elements = order.map(([e]) => { if ((e.zIndex ?? 0) < 0) e.background = true; return e; });
     p.version = 5;
   }
+  upgrade(p);
+  if (p._newer) { delete p._newer; toast('This project was saved by a newer EasyMV. Some of it may not show correctly.', 6000); }
   normalize(p);
   return p;
 }
@@ -165,7 +173,7 @@ export function normalize(p) {
 
 /** Project as the engine should see it (UI-only data removed). */
 export function strip(p) {
-  const { sections, lengthSec, ...rest } = p;
+  const { sections, lengthSec, tempo, ...rest } = p;
   return {
     ...rest,
     // the engine only routes numbers: render-only choices (blend mode, script type) are hidden from it so an older engine build still accepts them
@@ -179,7 +187,7 @@ export function strip(p) {
 function snapshot() {
   const p = state.project;
   const clean = (e) => { const { _error, ...rest } = e; return rest; };
-  return JSON.stringify({ videoFps: p.videoFps, resolution: p.resolution, elements: p.elements.map(clean), connections: p.connections, tracks: p.tracks, sections: p.sections });
+  return JSON.stringify({ videoFps: p.videoFps, resolution: p.resolution, elements: p.elements.map(clean), connections: p.connections, tracks: p.tracks, sections: p.sections, tempo: p.tempo ?? null });
 }
 
 export const canUndo = () => history.canUndo;
@@ -187,7 +195,46 @@ export const canRedo = () => history.canRedo;
 export const undoLabel = () => history.undoLabel;
 export const redoLabel = () => history.redoLabel;
 
+// ---------- crash recovery ----------
+
+const snapshotFiles = () => {
+  const files = new Map(state.files);
+  if (state.masterFile) files.set(state.masterFile.name, state.masterFile);
+  for (const s of state.stemFiles) files.set(s.file.name, s.file);
+  return files;
+};
+const saveRecovery = quiet(async () => {
+  if (!state.project || !state.dirty) return;
+  try {
+    const p = { ...state.project, elements: state.project.elements.map(({ _error, ...e }) => e) };
+    if (!hasContent({ project: p })) return;
+    await writeSnapshot({ project: JSON.parse(JSON.stringify(p)), files: snapshotFiles() });
+    emit('recovery');
+  } catch { /* storage full or unavailable: the app keeps working without it */ }
+});
+/** After an explicit save the work is safe on disk, so the recovery copy is dropped. */
+export function markSaved() { state.dirty = false; clearSnapshot(); }
+/** At start-up: is there an unsaved session from a previous visit? Returns { savedAt, layers, hasFiles } or null. */
+export async function checkRecovery() {
+  const rec = await readSnapshot('latest');
+  if (!hasContent(rec)) return null;
+  return { savedAt: rec.savedAt, layers: rec.project.elements.length, hasFiles: !!rec.files, name: rec.project.masterMix?.path ?? '' };
+}
+export async function restoreRecovery() {
+  const rec = await readSnapshot('latest'); if (!hasContent(rec)) return false;
+  fatal('');
+  const files = rec.files ? new Map(rec.files) : null;
+  await adoptProject(rec.project, files);
+  if (!files) fatal(`Restored the project. Its media was too large to keep: re-select ${rec.project.masterMix?.path || 'the song'} and your layer files by name.`);
+  else if (state.masterFile) await analyze();
+  state.dirty = true;
+  return true;
+}
+export const discardRecovery = () => clearSnapshot();
+globalThis.addEventListener?.('beforeunload', (e) => { if (state.dirty) { e.preventDefault(); e.returnValue = ''; } });
+
 export function commit(label, key = null) {
+  state.dirty = true; saveRecovery();
   if (!state.project) return;
   history.push(snapshot(), label, key);
   emit('history');
@@ -198,7 +245,8 @@ async function restore(snapStr) {
   const snap = JSON.parse(snapStr);
   const p = state.project;
   const resChanged = snap.resolution[0] !== p.resolution[0] || snap.resolution[1] !== p.resolution[1];
-  Object.assign(p, { videoFps: snap.videoFps, resolution: snap.resolution, elements: snap.elements, connections: snap.connections, tracks: snap.tracks, sections: snap.sections });
+  Object.assign(p, { videoFps: snap.videoFps, resolution: snap.resolution, elements: snap.elements, connections: snap.connections, tracks: snap.tracks, sections: snap.sections, tempo: snap.tempo ?? null });
+  setScriptTempo(p.tempo);
   normalize(p);
   await syncAssets();
   if (state.selected && !layerById(state.selected)) select(null);
@@ -764,6 +812,35 @@ export const visibilitySpans = (id) => TL.visibilitySpans(trackOf(id, 'visible')
 
 // ---------- sections ----------
 
+// ---------- tempo ----------
+
+export const getTempo = () => normTempo(state.project?.tempo);
+const tempoSnapshot = () => JSON.stringify(state.project.tempo);
+/** Replace (or clear with null) the project's tempo. */
+export function setTempo(t, label = 'Set tempo', key = null) {
+  state.project.tempo = t ? normTempo(t) : null;
+  setScriptTempo(state.project.tempo);
+  recompile?.();
+  structural(); commit(label, key);
+  emit('project');
+}
+export const patchTempo = (patch, label = 'Edit tempo', key = 'tempo') => {
+  const cur = getTempo() ?? { bpm: 120, offset: 0, sig: 4, changes: [] };
+  setTempo({ ...cur, ...patch }, label, key);
+};
+/** Guess the tempo of the loaded song from its onset curve. Returns the detection result (or null) without changing anything. */
+export function detectSongTempo() {
+  if (!state.engine) return null;
+  return detectTempo(getSeries('master', 4), state.engine.analysis_rate());
+}
+/** Beat lines (frames) of the current grid, for the timeline. */
+export function tempoGrid(div, f0, f1) {
+  const t = getTempo(); if (!t) return [];
+  return gridLines(t, f0 / fps(), f1 / fps(), div).map((g) => ({ f: g.t * fps(), beat: g.beat }));
+}
+export { tapTempo, beatAt, timeAt, snapSeconds, noteBeats, firstBeatAfter };
+void tempoSnapshot;
+
 export function addSection(start = state.frame, length = Math.round(fps() * 8)) {
   const p = state.project;
   const n = p.sections.length;
@@ -971,6 +1048,7 @@ export function saveProjectJson() {
   p.elements = state.project.elements.map(({ _error, ...e }) => e);
   p.connections = state.project.connections;
   download(new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' }), 'project.easymv.json');
+  markSaved();
 }
 
 export async function saveBundle() {
@@ -983,6 +1061,7 @@ export async function saveBundle() {
     toast('Packing bundle…', 8000);
     const { blob, missing } = await packBundle(p, files);
     download(blob, 'project.easymv.zip');
+    markSaved();
     toast(missing.length ? `Saved, but missing: ${missing.join(', ')}` : `Bundle saved (${(blob.size / MB).toFixed(1)} MB)`, 5000);
   } catch (e) { fatal(`Could not save bundle: ${e.message ?? e}`); }
 }
@@ -1001,7 +1080,9 @@ async function adoptProject(p, bundleFiles) {
     state.stemFiles = p.stems.map((s) => ({ id: s.id, file: bundleFiles.get(s.path) })).filter((s) => s.file);
   }
   state.project = p;
+  setScriptTempo(p.tempo);
   state.selected = null;
+  state.dirty = false;
   await syncAssets();
   if (state.canvas) await rebuildRenderer();
   resetHistory();
@@ -1146,6 +1227,7 @@ export async function play() {
   audioSrc.start(0, offset);
   state.playing = true;
   emit('transport');
+  startMetronome();
   const tick = () => {
     if (!state.playing) return;
     const f = Math.floor((audioCtx.currentTime - playStart) * rate * transport.rate);
@@ -1171,8 +1253,39 @@ export function stop() {
   state.playing = false;
   try { audioSrc?.stop(); } catch { /* not started */ }
   audioSrc = null;
+  stopMetronome();
   if (was) emit('transport');
 }
+
+// ---------- metronome (a click on every beat while playing, to check the tempo grid by ear) ----------
+let metroTimer = 0; let metroNext = 0;
+function stopMetronome() { clearInterval(metroTimer); metroTimer = 0; }
+function startMetronome() {
+  stopMetronome();
+  const tempo = getTempo();
+  if (!state.prefs.metronome || !tempo || !audioCtx) return;
+  const rate = transport.rate || 1;
+  const songNow = () => (audioCtx.currentTime - playStart) * rate;
+  metroNext = Math.ceil(beatAt(songNow(), tempo) - 1e-6);
+  metroTimer = setInterval(() => {
+    if (!state.playing) { stopMetronome(); return; }
+    while (true) {
+      const tSong = timeAt(metroNext, tempo);
+      const when = playStart + tSong / rate;
+      if (when > audioCtx.currentTime + 0.15) break;
+      if (when >= audioCtx.currentTime - 0.02) {
+        const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+        const down = ((metroNext % tempo.sig) + tempo.sig) % tempo.sig === 0;
+        o.frequency.value = down ? 1760 : 1100; o.type = 'square';
+        const at = Math.max(when, audioCtx.currentTime);
+        g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(down ? 0.25 : 0.15, at + 0.002); g.gain.exponentialRampToValueAtTime(0.0001, at + 0.05);
+        o.connect(g); g.connect(audioCtx.destination); o.start(at); o.stop(at + 0.06);
+      }
+      metroNext++;
+    }
+  }, 25);
+}
+export function setMetronome(on) { setPref('metronome', !!on); if (state.playing) startMetronome(); emit('transport'); }
 
 export const togglePlay = () => (state.playing ? stop() : play());
 
@@ -1231,7 +1344,7 @@ export async function exportVideo() {
       signal: abort.signal,
       onProgress: (frac, f) => {
         state.export.frac = frac;
-        if (f % 15 === 0 && !document.hidden) state.export.msg = `Frame ${f + 1} / ${state.bridge.totalFrames} (${((f + 1) / ((performance.now() - t0) / 1000)).toFixed(1)} fps)`;
+        if (f % 15 === 0 && !document.hidden) { const el = (performance.now() - t0) / 1000; const rate = (f + 1) / el; const left = Math.max(0, (state.bridge.totalFrames - f - 1) / rate); const mm = (x) => `${Math.floor(x / 60)}:${String(Math.round(x % 60) % 60).padStart(2, '0')}`; state.export.msg = `Frame ${f + 1} / ${state.bridge.totalFrames} (${rate.toFixed(1)} fps) · ${mm(el)} elapsed · about ${mm(left)} left`; }
         emit('export');
       },
     });
@@ -1399,7 +1512,7 @@ export function applyDeck(id, label = 'Retime slideshow') {
   const m = layerById(id); if (!m?.deck) return null;
   const deck = deckSettings(m.deck);
   const songSec = state.bridge ? totalFrames() / fps() : 0;
-  const sp = deckSpans(deck, { songSec });
+  const sp = deckSpans(deck, { songSec, tempo: getTempo() });
   const F = fps(); const f = (x) => Math.max(0, Math.round(x * F));
   const total = Math.max(totalFrames(), f(sp.total + 2));
   const off = !!deck.off;
@@ -1450,7 +1563,7 @@ export function setDeckSlide(id, i, patch, label = 'Edit slide') {
   Object.assign(s, patch); return applyDeck(id, label);
 }
 export function toggleFolder(id) { const m = layerById(id); if (m) { m.collapsed = !m.collapsed; emit('project'); } }
-export const deckTiming = (id) => { const m = layerById(id); return m?.deck ? deckSpans(m.deck, { songSec: state.bridge ? totalFrames() / fps() : 0 }) : null; };
+export const deckTiming = (id) => { const m = layerById(id); return m?.deck ? deckSpans(m.deck, { songSec: state.bridge ? totalFrames() / fps() : 0, tempo: getTempo() }) : null; };
 
 /** A slideshow from plain images: the same folder, timing and transitions, no PowerPoint involved. */
 export async function importImagesAsDeck(files, { name = 'Slideshow', timing = {}, animate = true } = {}) {

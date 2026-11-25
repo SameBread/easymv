@@ -9,7 +9,7 @@ export function fmtT(t) {
   const m = Math.floor(x / 60); const s = x - m * 60;
   return `${m}:${s.toFixed(2).padStart(5, '0')}`;
 }
-const TAG = /^(\s*)\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?(?:\s*[-–>]\s*\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?)?\]\s*/;
+const TAG = /^(\s*)\[\s*(?:@\d+(?:\.\d+){0,2}|\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?)(?:\s*[-–>]\s*(?:@\d+(?:\.\d+){0,2}|\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?))?\s*\]\s*/;
 const stripTag = (l) => l.replace(TAG, '$1');
 const lines = (text) => String(text).split(/\r?\n/);
 
@@ -86,4 +86,27 @@ export function scriptToLines(text) {
 }
 export function scriptToLrc(text) {
   return listLines(text).filter((l) => l.t != null).map((l) => `[${fmtT(l.t).padStart(8, '0')}]${l.text}`).join('\n');
+}
+
+/** Move a whole scene so it starts at `newT0` (every timed line shifts by the same amount; an untimed first line gets a time). */
+export function moveScene(text, si, oldT0, newT0) {
+  const dt = newT0 - oldT0;
+  let out = text;
+  const mine = listLines(text).filter((l) => l.scene === si);
+  mine.forEach((l) => {
+    if (l.t != null) out = setLineTime(out, l.k, { t: Math.max(0, l.t + dt), t1: l.t1 != null ? Math.max(0, l.t1 + dt) : undefined });
+    else if (l.first) out = setLineTime(out, l.k, { t: Math.max(0, newT0) });
+  });
+  return out;
+}
+
+/** Change when a scene ends: the latest explicit end time wins, otherwise ::dur. */
+export function setSceneEnd(text, si, t0, t1) {
+  const mine = listLines(text).filter((l) => l.scene === si);
+  const withEnd = mine.filter((l) => l.t1 != null);
+  if (withEnd.length) {
+    const last = withEnd.reduce((a, b) => (b.t1 > a.t1 ? b : a));
+    return setLineTime(text, last.k, { t1: Math.max((last.t ?? t0) + 0.3, t1) });
+  }
+  return setDir(text, si, 'dur', String(Math.round(Math.max(0.3, t1 - t0) * 100) / 100));
 }

@@ -16,24 +16,26 @@
 //   }
 
 import { fmtT } from './scripttext.js';
+import { normTempo, beatAt, timeAt } from './tempo.js';
 
 export const DECK_MODES = [
   ['reading', 'Reading time', 'Each slide stays as long as its text takes to read'],
   ['fixed', 'Same seconds each', 'Every slide gets the same number of seconds'],
   ['even', 'Even across the window', 'Slides share the time between Start and End equally (the song length if End is left open)'],
+  ['beats', 'On the beat', 'Every slide lasts the same number of beats of the song’s tempo, so cuts land on the beat (set the tempo first)'],
   ['weighted', 'By text across the window', 'Slides share the time between Start and End, wordier slides get more'],
 ];
 export const DECK_TRANS = [
   ['fade', 'Crossfade'], ['dissolve', 'Dissolve'], ['zoom', 'Zoom in'], ['push', 'Push left'], ['rise', 'Rise up'], ['cut', 'Cut'],
 ];
-export const DECK_DEFAULTS = { start: 0, end: null, mode: 'reading', fixed: 5, fade: 0.4, trans: 'fade', scriptHead: '@pack editorial', script: null, slides: [] };
+export const DECK_DEFAULTS = { start: 0, end: null, mode: 'reading', fixed: 5, beats: 8, fade: 0.4, trans: 'fade', scriptHead: '@pack editorial', script: null, slides: [] };
 export const deckSettings = (d) => ({ ...DECK_DEFAULTS, ...d, slides: d?.slides ?? [] });
 
 const MIN_DUR = 0.4;
 
 /** Natural length of a slide in seconds under the deck's mode. */
 export function naturalSeconds(slide, deck) {
-  if (deck.mode === 'fixed') return deck.fixed;
+  if (deck.mode === 'fixed' || deck.mode === 'beats') return deck.fixed;
   const w = (slide.pages ?? []).reduce((a, p) => a + Math.max(0.5, p.w ?? 0), 0);
   return w > 0 ? w : deck.fixed;
 }
@@ -43,17 +45,26 @@ export function naturalSeconds(slide, deck) {
  * `songSec` is the length of the song (0 when there is none). Manual per-slide durations are honoured first and the rest
  * is spread over what remains of the window. An explicit End is a hard limit: natural timings are only ever compressed to fit it.
  */
-export function deckSpans(deckIn, { songSec = 0 } = {}) {
+export function deckSpans(deckIn, { songSec = 0, tempo = null } = {}) {
   const deck = deckSettings(deckIn);
+  const tp = normTempo(tempo);
   const shown = deck.slides.map((s) => !s.hidden);
   const n = shown.filter(Boolean).length;
   const start = Math.max(0, Number(deck.start) || 0);
   const limit = deck.end != null && Number(deck.end) > start ? Number(deck.end) : null;
   const spread = deck.mode === 'even' || deck.mode === 'weighted';
+  const onBeat = deck.mode === 'beats' && tp;
   const windowEnd = limit ?? (spread && songSec > start ? songSec : null);
   const manual = (s) => (s.dur > 0 ? Number(s.dur) : null);
   const dur = deck.slides.map(() => 0);
-  if (n) {
+  let startShift = 0;
+  if (n && onBeat) {
+    // slides are N beats long and the first one starts on the nearest beat, so every cut lands on the grid
+    const N = Math.max(0.25, Number(deck.beats) || 4); let t = timeAt(Math.round(beatAt(start, tp)), tp);
+    deck.slides.forEach((s, i) => { if (!shown[i]) return; const t1 = manual(s) ? t + manual(s) : timeAt(beatAt(t, tp) + N, tp); dur[i] = t1 - t; t = t1; });
+    if (limit) { const total = dur.reduce((a, b) => a + b, 0); const avail = limit - start; if (total > avail) { const k = avail / total; deck.slides.forEach((s, i) => { dur[i] *= k; }); } }
+    startShift = timeAt(Math.round(beatAt(start, tp)), tp) - start;
+  } else if (n) {
     if (spread && windowEnd) {
       const used = deck.slides.reduce((a, s, i) => a + (shown[i] && manual(s) ? manual(s) : 0), 0);
       const free = deck.slides.map((s, i) => shown[i] && !manual(s));
@@ -74,7 +85,7 @@ export function deckSpans(deckIn, { songSec = 0 } = {}) {
       }
     }
   }
-  let t = start;
+  let t = start + startShift;
   const slides = deck.slides.map((s, i) => {
     if (!shown[i]) return null;
     const t0 = t; t += dur[i];
@@ -82,7 +93,7 @@ export function deckSpans(deckIn, { songSec = 0 } = {}) {
     let pt = t0;
     return { t0, t1: t, pages: pages.map((p) => { const a = pt; pt += (dur[i] * Math.max(0.5, p.w ?? 0)) / tw; return { t0: a, t1: pt }; }) };
   });
-  return { slides, start, end: t, total: t, limit, windowEnd };
+  return { slides, start: start + startShift, end: t, total: t, limit, windowEnd };
 }
 
 /** The deck's transition name -> the script engine's transition. */

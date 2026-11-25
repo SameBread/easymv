@@ -15,6 +15,9 @@
 //
 // ctx: { W, H, measure(text, font, weight, px) -> width px, total? (seconds to fill) }
 
+import { normTempo, parseBarTag, beatAt } from './tempo.js';
+
+
 // ---------- small utils ----------
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -138,6 +141,11 @@ const STOP = new Set(('a an the and or but if so of to in on at by for from with
 const norm = (w) => w.toLowerCase().replace(/[^\p{L}\p{N}']/gu, '');
 const TT = String.raw`(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?`;
 const TIME_TAG = new RegExp(String.raw`^\[${TT}(?:\s*[-\u2013>]\s*${TT})?\]\s*`);
+const BAR_TAG = /^\[\s*(@\d+(?:\.\d+){0,2}|\d+:\d+(?:[.:]\d+)?)\s*(?:[-\u2013>]\s*(@\d+(?:\.\d+){0,2}|\d+:\d+(?:[.:]\d+)?))?\s*\]\s*/;
+/** The song's tempo, used to read [@bar.beat] times. The app sets it whenever the project's tempo changes. */
+let TEMPO = null;
+export const setScriptTempo = (t) => { TEMPO = t ? normTempo(t) : null; };
+export const getScriptTempo = () => TEMPO;
 const tsec = (a, b, c) => Number(a) * 60 + Number(b) + (c ? Number(c) / 10 ** c.length : 0);
 
 /** `{size=1.5 color=accent at=C3 delay=.3 motion=pop}` -> { size, color, at, delay, motion }. Bare words: big, small, accent, dim. */
@@ -169,6 +177,7 @@ export function parseMods(str) {
     else if (k === 'role' && v) m.role = v.toLowerCase();
     else if (k === 'fx' && v) m.fx = parseFxList(v);
     else if (FX_SET.has(k) && v == null) (m.fx ??= []).push(k);
+    else if (k === 'sync' && v) m.sync = /^beat/i.test(v) ? 'beat' : 'none';
     else if (k === 'amp' && v != null && Number.isFinite(Number(v))) m.amp = clamp(Number(v), 0, 4);
     else if (k === 'speed' && v != null && Number.isFinite(Number(v))) m.speed = clamp(Number(v), 0.1, 6);
     else if (k === 'bold' || k === 'italic' || k === 'underline' || k === 'strike') (m.st ??= {})[k[0]] = v !== '0' && v !== 'off';
@@ -260,6 +269,7 @@ export function parseScript(text) {
   for (const rawLine of String(text).split(/\r?\n/)) {
     ln++;
     const line = rawLine.trim();
+    if (/^\/\//.test(line)) continue;                       // // comment: ignored, and it neither joins nor splits scenes
     if (!line) { if (!keepGoing) pendingBreak = true; continue; }
     if (/^\+{3,}$/.test(line)) { pendingBreak = false; keepGoing = true; continue; }
     if (/^-{3,}$/.test(line)) { flush(); pendingBreak = false; keepGoing = false; continue; }
@@ -271,7 +281,13 @@ export function parseScript(text) {
     // One grammar for every line:  [time] marker text {mods}   (marker and time may come in either order)
     //   time   [0:12.5]  [0:12.5-0:15]        marker  #  ##  -  1.  >  --
     let t = null; let t1 = null; let body = line; let role = null;
-    const takeTime = () => { if (t == null && (m = TIME_TAG.exec(body))) { t = tsec(m[1], m[2], m[3]); if (m[4] != null) t1 = tsec(m[4], m[5], m[6]); body = body.slice(m[0].length); return true; } return false; };
+    const takeBar = () => {
+      // musical time: [@17] = bar 17, [@17.3] = bar 17 beat 3, [@17.3.5] = beat 3.5; either end may also be a plain 0:12 time
+      if (t != null || !(m = BAR_TAG.exec(body))) return false;
+      const conv = (x) => (x == null ? null : x[0] === '@' ? parseBarTag(x, TEMPO) : (() => { const q = /^(\d+):(\d+)(?:[.:](\d+))?$/.exec(x); return q ? tsec(q[1], q[2], q[3]) : null; })());
+      t = conv(m[1]); t1 = conv(m[2]); body = body.slice(m[0].length); return true;
+    };
+    const takeTime = () => { if (t == null && !/^\[\s*@/.test(body) && (m = TIME_TAG.exec(body))) { t = tsec(m[1], m[2], m[3]); if (m[4] != null) t1 = tsec(m[4], m[5], m[6]); body = body.slice(m[0].length); return true; } return false; };
     const takeMarker = () => {
       if (role) return false;
       if ((m = /^(#{1,2})\s+(.*)$/.exec(body))) { role = m[1].length === 1 ? 'title' : 'sub'; body = m[2]; return true; }
@@ -281,7 +297,7 @@ export function parseScript(text) {
       if ((m = /^--\s*(.*)$/.exec(body))) { role = 'cite'; body = m[1]; return true; }
       return false;
     };
-    for (let guard = 0; guard < 3; guard++) if (!takeTime() && !takeMarker()) break;
+    for (let guard = 0; guard < 3; guard++) if (!takeTime() && !takeBar() && !takeMarker()) break;
     // A "# Title" starts a new scene in an untimed outline. Timed lines never split a scene by themselves:
     // use a blank line or --- for that, so a heading can sit among timestamped lyrics without cutting them in two.
     if (role === 'title' && cur?.lines.length && t == null && cur.lines.every((l) => l.tag == null)) flush();
@@ -662,6 +678,7 @@ function planPalette(P, sc, i, seed, prevIdx, ov = {}) {
   return { idx, bg, bg2, fg, accent, onAccent: readable(accent) };
 }
 
+export const MOTION_IDS = ['spin', 'stretch', 'swing', 'bounce', 'pop', 'drop', 'slideL', 'slideR', 'zoom', 'flip', 'rise', 'fade', 'tilt', 'type'];
 const IN_FOR = { spin: 'spin', stretch: 'stretch', swing: 'swing', bounce: 'bounce', pop: 'pop', drop: 'drop', slideL: 'slideL', slideR: 'slideR', zoom: 'zoom', flip: 'flip', rise: 'rise', fade: 'fade', tilt: 'tilt', type: 'type' };
 
 /**
@@ -809,6 +826,7 @@ export function compileScript(script, ctx) {
     const step = SP.step * (1.35 - 0.7 * energy);
     const lineCount = new Map();
     const sceneFx = sc.dir.fx != null ? parseFxList(sc.dir.fx) : parseFxList(opts.fx);
+    const sceneSync = /^beat/i.test(String(sc.dir.sync ?? opts.sync ?? '')) ? 'beat' : 'none';
     const sceneAmp = clamp(Number(sc.dir.amp ?? opts.amp ?? 1) || 1, 0, 4); const sceneSpeed = clamp(Number(sc.dir.speed ?? opts.speed ?? 1) || 1, 0.1, 6);
     const runs = lay.runs.flatMap((r0, idx) => {
       let r = r0;
@@ -829,7 +847,7 @@ export function compileScript(script, ctx) {
       const base = { ...r, idx, font: scx.font(r.role), weight: scx.weight(r.role, r.st), color: onBar ? 'onAccent' : c,
         t0: r.deco ? lineT[0] : rt, anim: { type: r.deco ? 'zoom' : (IN_FOR[r.mod?.motion] ?? inType), spring },
         bar: onBar, phase: rnd(seed, 'ph', i, idx) * 6.283,
-        ...(fxl.length && !r.deco ? { fx: fxl, fxAmp: r.mod?.amp ?? lmod?.amp ?? sceneAmp, fxSpeed: r.mod?.speed ?? lmod?.speed ?? sceneSpeed } : {}) };
+        ...(fxl.length && !r.deco ? { fx: fxl, fxAmp: r.mod?.amp ?? lmod?.amp ?? sceneAmp, fxSpeed: r.mod?.speed ?? lmod?.speed ?? sceneSpeed, fxSync: r.mod?.sync ?? lmod?.sync ?? sceneSync } : {}) };
       if (!r.syl || r.deco) return [base];
       // syllables: one run each, left to right inside the word's box, appearing one by one
       const parts = r.syl.map((p) => scx.text(r.role, p.t));
@@ -854,7 +872,7 @@ export function compileScript(script, ctx) {
     const outD = od === 'cut' || od === 'none' ? 0 : Number.isFinite(Number(od)) && od !== '' ? clamp(Number(od), 0, 4) : 0.35;
     const gone = endX[i] ? t0 + d : t0 + d + outD;
     scenes.push({ i, t0, t1: t0 + d, dur: d, layout: used, pal, bgKind, runs, decor, inType, emphStyle, spring,
-      idle: SP.idle, pulse: SP.pulse, drift: SP.drift, pack: styleName, trans: null, enter: null, next: -1, lineT, outD, gone, reveal });
+      idle: SP.idle, pulse: SP.pulse, drift: SP.drift, pack: styleName, trans: null, enter: null, next: -1, lineT, outD, gone, reveal, tempo: normTempo(ctx.tempo ?? TEMPO) });
   });
 
   // transitions between scenes
@@ -894,11 +912,33 @@ export function spring(u, k, z) {
 
 const hsl = (h, s2, l) => { const k = (n) => (n + h / 30) % 12; const a = s2 * Math.min(l, 1 - l); const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1))); return [f(0) * 255, f(8) * 255, f(4) * 255]; };
 /** Continuous per-word effects. Everything is a pure function of the time, so scrubbing and export match the preview. */
-function fxApply(st, r, t, u, sz) {
+function fxApply(st, r, t, u, sz, sc) {
   const A = r.fxAmp ?? 1; const S = r.fxSpeed ?? 1; const ph = r.phase ?? 0; const wi = Math.max(0, r.wi ?? 0);
   const k = easeOutCubic(clamp(u / 0.4, 0, 1));          // effects ease in after the word arrives
   const T = t * S;
+  // sync=beat: these effects follow the song's beat grid instead of a free-running clock
+  const bt = r.fxSync === 'beat' && sc?.tempo ? beatAt(t, sc.tempo) * S : null;
+  const bp = bt == null ? 0 : bt - Math.floor(bt);
   for (const f of r.fx) {
+    if (bt != null) {
+      let done = true;
+      switch (f) {
+        case 'pulse': { const p = 1 + 0.16 * A * k * Math.exp(-bp * 5); st.sx *= p; st.sy *= p; break; }
+        case 'bounce': st.dy -= Math.sin(Math.PI * bp) * sz * 0.24 * A * k; st.sy *= 1 - (1 - Math.sin(Math.PI * bp)) * 0.07 * A * k; break;
+        case 'hop': st.dy -= (bp < 0.4 ? Math.sin((bp / 0.4) * Math.PI) : 0) * sz * 0.4 * A * k; break;
+        case 'shake': { const n = Math.floor(bt * 12); const a = Math.exp(-bp * 6) * A * k; st.dx += (rnd('shx', r.idx, n) - 0.5) * sz * 0.2 * a; st.dy += (rnd('shy', r.idx, n) - 0.5) * sz * 0.2 * a; st.rot += (rnd('shr', r.idx, n) - 0.5) * 0.1 * a; break; }
+        case 'wobble': st.rot += Math.sin(Math.PI * bt) * 0.14 * A * k; break;
+        case 'swing': st.rot += Math.sin(Math.PI * bt * 0.5) * 0.25 * A * k; break;
+        case 'jelly': { const d = Math.sin(bp * 12.566) * 0.16 * A * k * Math.exp(-bp * 4); st.sx *= 1 + d; st.sy *= 1 - d; break; }
+        case 'heartbeat': { const b = Math.exp(-((bp - 0.05) ** 2) * 160) + 0.6 * Math.exp(-((bp - 0.4) ** 2) * 200); const p = 1 + b * 0.18 * A * k; st.sx *= p; st.sy *= p; break; }
+        case 'flicker': st.alpha *= 1 - Math.exp(-bp * 8) * 0.6 * Math.min(1, A) * k; break;
+        case 'rubber': { const c = Math.sin(Math.PI * bt); st.sx *= 1 + c * 0.16 * A * k; st.sy *= 1 - c * 0.12 * A * k; break; }
+        case 'spin': st.rot += bt * 1.5708 * A; break;
+        case 'breathe': { const p = 1 + Math.sin(Math.PI * bt * 0.5) * 0.05 * A * k; st.sx *= p; st.sy *= p; break; }
+        default: done = false;
+      }
+      if (done) continue;
+    }
     switch (f) {
       case 'shake': { const n = Math.floor(T * 22); st.dx += (rnd('shx', r.idx, n) - 0.5) * sz * 0.14 * A * k; st.dy += (rnd('shy', r.idx, n) - 0.5) * sz * 0.14 * A * k; st.rot += (rnd('shr', r.idx, n) - 0.5) * 0.08 * A * k; break; }
       case 'tremble': { const n = Math.floor(T * 40); st.dx += (rnd('trx', r.idx, n) - 0.5) * sz * 0.045 * A * k; st.dy += (rnd('try', r.idx, n) - 0.5) * sz * 0.045 * A * k; break; }
@@ -947,7 +987,7 @@ function runState(r, t, sc, pulse, W, H) {
     case 'bounce': st.dy = -sz * 1.5 * Math.abs(Math.cos(u * 9)) * Math.exp(-u * 4.5); break;
     default: break;
   }
-  if (r.fx?.length && !r.deco) fxApply(st, r, t, u, sz);
+  if (r.fx?.length && !r.deco) fxApply(st, r, t, u, sz, sc);
   if (r.deco) { st.alpha *= 0.55; }
   const p = 1 + pulse * sc.pulse * (r.emph ? 1.7 : 0.55) * (r.deco ? 0 : 1);
   st.sx *= p; st.sy *= p;

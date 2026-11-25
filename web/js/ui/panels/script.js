@@ -10,6 +10,7 @@ import { h, icon, clear, numField, selectField, colorField, toggle, rafThrottle,
 import { scriptSettings, compileFor, MODES, applyMode } from '../../script.js';
 import { PACKS, PACK_IDS, LAYOUT_IDS, TRANSITION_IDS, DECO_NAMES, summarize } from '../../kinetic.js';
 import { cheatSheet } from './cheatsheet.js';
+import { scriptEditor } from '../scripteditor.js';
 import { listLines, setLineTime, getDir, setDir, sceneRows, scriptToLrc, lrcToScript } from '../../scripttext.js';
 import { parseLrc } from '../../lyrics.js';
 
@@ -102,9 +103,10 @@ export function createScriptPanel(shell) {
   // ---------- tabs ----------
 
   function writeTab(def, s) {
-    const ta = h('textarea.script-text', { rows: 16, spellcheck: false, 'aria-label': 'Script text',
-      oninput: () => { clearTimeout(timer); timer = setTimeout(() => edit(def, (x) => { x.text = ta.value; }, 'Edit script', `scr:${def.id}:text`), 250); } });
-    ta.value = s.text;
+    const ctx = () => ({ songSec: state.bridge ? core.totalFrames() / fps() : 0, tempo: core.getTempo() });
+    const ed = scriptEditor({ text: s.text, getContext: ctx, toast: core.toast,
+      onInput: (v) => { clearTimeout(timer); timer = setTimeout(() => edit(def, (x) => { x.text = v; }, 'Edit script', `scr:${def.id}:text`), 250); } });
+    shell.scriptEditor = ed;
     const lrcIn = h('input', { type: 'file', accept: '.lrc,.txt,text/plain', hidden: true, onchange: async (e) => {
       const f = e.target.files[0]; e.target.value = ''; if (!f) return;
       const txt = await f.text();
@@ -116,7 +118,7 @@ export function createScriptPanel(shell) {
       card('What are you making?', 'auto_fix_high',
         seg(Object.entries(MODES).map(([k, m]) => [k, m.label.split(' / ')[0].replace(' over a background', '')]), s.mode, (v) => edit(def, (x) => applyMode(x, v), `Script mode: ${MODES[v].label}`), 'Mode'),
         note(MODE_HELP[s.mode])),
-      card('Script', 'edit', ta,
+      card('Script', 'edit', ed.el,
         h('div.row',
           h('button.btn.tonal', { type: 'button', onclick: () => lrcIn.click() }, icon('file_upload'), 'Import LRC'),
           h('button.btn.text', { type: 'button', disabled: !listLines(s.text).some((l) => l.t != null), onclick: () => core.download(new Blob([scriptToLrc(s.text)], { type: 'text/plain' }), `${def.id}.lrc`) }, icon('file_download'), 'Export LRC'),
@@ -158,6 +160,7 @@ export function createScriptPanel(shell) {
       card(`Lines (${lines.length})`, 'timeline', lines.length ? rows : note('No lines yet.'),
         h('div.row', h('button.btn.text', { type: 'button', disabled: !lines.length, onclick: () => editText(def, (t) => { let out = t; let at = now(); lines.forEach((_, i) => { out = setLineTime(out, i, { t: at }); at += 3; }); return out; }, 'Space lines evenly'), title: 'Put every line 3 seconds apart, starting at the playhead' }, icon('timeline'), 'Space evenly from playhead'),
           h('button.btn.text', { type: 'button', disabled: !lines.some((l) => l.t != null || l.t1 != null), onclick: () => editText(def, (t) => { let out = t; lines.forEach((_, i) => { out = setLineTime(out, i, { t: null, t1: null }); }); return out; }, 'Clear all times') }, icon('delete'), 'Clear all times')),
+        core.getTempo() ? h('div.row', h('button.btn.text', { type: 'button', disabled: !lines.some((l) => l.t != null), title: 'Move every timed line to the nearest beat of the grid (uses the grid note length chosen on the timeline)', onclick: () => { const g = state.prefs.grid; const div = g && g !== 'off' && g !== 'auto' ? g : '1/4'; editText(def, (t) => { let out = t; lines.forEach((l, i) => { if (l.t != null) out = setLineTime(out, i, { t: Math.max(0, core.snapSeconds(l.t, core.getTempo(), div)), ...(l.t1 != null ? { t1: core.snapSeconds(l.t1, core.getTempo(), div) } : {}) }); }); return out; }, 'Snap lines to beat'); } }, icon('grid_on'), 'Snap all lines to the beat')) : null,
         note('Lines without a time use reading time. Set an end to make a line disappear before the next one starts.')),
     ];
   }

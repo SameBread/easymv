@@ -45,6 +45,9 @@ export function createDeckSections(section, shell) {
     const modeHint = h('div.note', DECK_MODES.find((m) => m[0] === d.mode)?.[2] ?? '');
     const fixed = h('input.text-input.sm', { type: 'number', min: '0.5', max: '600', step: '0.5', value: String(d.fixed), 'aria-label': 'Seconds per slide' });
     fixed.addEventListener('change', () => { const v = Number(fixed.value); if (v > 0) set({ fixed: v }, 'Seconds per slide'); });
+    const beatsN = Number(d.beats) || 4;
+    const beats = h('input.text-input.sm', { type: 'number', min: '0.25', max: '128', step: '0.25', value: String(beatsN), 'aria-label': 'Beats per slide' });
+    beats.addEventListener('change', () => { const v = Number(beats.value); if (v > 0) set({ beats: v }, 'Beats per slide'); });
     const transSel = selectField({ label: 'Default transition', value: d.trans, options: DECK_TRANS, onChange: (v) => set({ trans: v }, 'Default transition') }).el;
     const fade = h('input.text-input.sm', { type: 'number', min: '0.05', max: '3', step: '0.05', value: String(d.fade), 'aria-label': 'Transition length' });
     fade.addEventListener('change', () => { const v = Number(fade.value); if (v > 0) set({ fade: v }, 'Transition length'); });
@@ -56,6 +59,8 @@ export function createDeckSections(section, shell) {
         clockField({ label: 'Ends by', value: d.end, placeholder: song ? `song end ${clockText(song)}` : 'open', allowEmpty: true, onChange: (v) => set({ end: v }, 'Slideshow end') })),
       h('div.note', song ? 'Before Start and after End the slideshow is gone, so you can put your own intro or ending around it.' : 'Add a song to spread slides across its length. Until then, End is a hard limit and an open End uses each slide’s own length.'),
       modeSel, modeHint,
+      d.mode === 'beats' ? h('label.fld.col', h('span.fld-label', 'Beats per slide'), h('span.clock-row', beats, h('span.muted', core.getTempo() ? `= ${(beatsN * 60 / core.getTempo().bpm).toFixed(2)} s at ${Math.round(core.getTempo().bpm * 10) / 10} BPM` : 'no tempo yet: set it in the timeline'))) : null,
+      d.mode === 'beats' ? h('div.row', ...[[1, '1 beat'], [2, '2'], [4, '1 bar'], [8, '2 bars'], [16, '4 bars']].map(([n, l]) => h('button.btn.text.sm', { type: 'button', class: d.beats === n ? 'on' : '', onclick: () => set({ beats: n }, 'Beats per slide') }, l))) : null,
       d.mode === 'fixed' || d.slides.some((s) => !s.pages?.length) ? h('label.fld.col', h('span.fld-label', d.mode === 'fixed' ? 'Seconds per slide' : 'Seconds for slides without text'), fixed) : null,
       h('div.row.two', transSel, h('label.fld.col', h('span.fld-label', 'Transition (s)'), fade)),
       toggle({ label: 'Animate (fades, zoom, chart growth)', value: d.animate !== false, onChange: (v) => set({ animate: v }, 'Slideshow animation') }).el);

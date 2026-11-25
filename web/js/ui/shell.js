@@ -470,12 +470,13 @@ export function createShell(root, dv) {
       return h('label.fld.col', h('span.fld-label', label), h('span.clock-row', input, here));
     };
     const secs = numField({ label: 'Seconds per slide', value: t.fixed, min: 0.5, max: 600, step: 0.5, suffix: 's', onChange: (v, f) => { if (f !== false) t.fixed = v; } });
+    const beatsF = numField({ label: 'Beats per slide', value: t.beats ?? 8, min: 0.25, max: 128, step: 0.25, onChange: (v) => { t.beats = v; } });
     const hint = h('div.note');
-    const sync = () => { secs.el.hidden = t.mode !== 'fixed'; hint.textContent = DECK_MODES.find((m) => m[0] === t.mode)?.[2] ?? ''; };
+    const sync = () => { secs.el.hidden = t.mode !== 'fixed'; beatsF.el.hidden = t.mode !== 'beats'; hint.textContent = DECK_MODES.find((m) => m[0] === t.mode)?.[2] ?? ''; };
     const mode = selectField({ label: 'Timing', value: t.mode, options: DECK_MODES.map(([v, l]) => [v, l]), onChange: (v) => { t.mode = v; sync(); } }).el;
     sync();
     return [h('div.row.two', clock('Starts at', 'start', '0:00'), clock('Ends by', 'end', song ? `song end ${clockText(song)}` : 'open')),
-      mode, secs.el, hint,
+      mode, secs.el, beatsF.el, hint,
       h('p.muted', song ? 'Slides become a Slideshow folder. You can change all of this later in the Inspector, and anything outside the folder (an intro, an ending) is yours.' : 'No song yet. “Even” modes need one, so add a song first or use Reading time or Same seconds.')];
   }
 
@@ -494,7 +495,7 @@ export function createShell(root, dv) {
       h('div.fgrid', ...timingFields(t)),
       h('p.muted', 'The slides arrive as one Slideshow folder: artwork, charts, tables and text, all timed by the folder.')],
     actions: [{ label: 'Cancel' }, { label: 'Import', variant: 'filled', run: async () => {
-      try { await core.importPptx(parsed, { name: file.name.replace(/\.pptx$/i, ''), backgrounds: opt.backgrounds, objects: opt.objects, timing: { mode: t.mode, start: t.start ?? 0, end: t.end, fixed: t.fixed } }); shell.showPanel('inspector'); }
+      try { await core.importPptx(parsed, { name: file.name.replace(/\.pptx$/i, ''), backgrounds: opt.backgrounds, objects: opt.objects, timing: { mode: t.mode, start: t.start ?? 0, end: t.end, fixed: t.fixed, beats: t.beats ?? 8 } }); shell.showPanel('inspector'); }
       catch (e) { core.toast(e.message || 'Import failed.', 5000); return false; } } }] });
   }
 
@@ -503,7 +504,7 @@ export function createShell(root, dv) {
     const t = { mode: state.bridge ? 'even' : 'fixed', start: null, end: null, fixed: 5 };
     dialog({ title: `Slideshow from ${fs.length} image${fs.length === 1 ? '' : 's'}`, wide: true, body: [h('div.fgrid', ...timingFields(t))],
       actions: [{ label: 'Cancel' }, { label: 'Create', variant: 'filled', run: async () => {
-        try { await core.importImagesAsDeck(fs, { name: 'Slideshow', timing: { mode: t.mode, start: t.start ?? 0, end: t.end, fixed: t.fixed }, animate: true }); shell.showPanel('inspector'); }
+        try { await core.importImagesAsDeck(fs, { name: 'Slideshow', timing: { mode: t.mode, start: t.start ?? 0, end: t.end, fixed: t.fixed, beats: t.beats ?? 8 }, animate: true }); shell.showPanel('inspector'); }
         catch (e) { core.toast(e.message || 'Could not make the slideshow.', 5000); return false; } } }] });
   });
 

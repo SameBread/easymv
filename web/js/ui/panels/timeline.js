@@ -7,6 +7,10 @@ import * as TL from '../../timeline.js';
 import { h, icon, iconBtn, clear, showMenu, rafThrottle, dialog } from '../dom.js';
 import { propsFor, PROP_BY_NAME } from '../../props.js';
 import { lineEnd } from '../../lyrics.js';
+import { compileFor } from '../../script.js';
+import { moveScene, setSceneEnd } from '../../scripttext.js';
+import { openTempoDialog } from '../tempodialog.js';
+import { NOTE_DIVISIONS, noteBeats } from '../../tempo.js';
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const STEPS = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
@@ -40,7 +44,21 @@ export function createTimelinePanel(shell) {
     ppf = avail / Math.max(1, total());
   }
 
+  let altHeld = false;
+  /** Grid snapping: with a tempo and a note length chosen, positions land on that note length (hold Alt to move freely). */
+  function gridSnap(f) {
+    const t = core.getTempo(); const g = state.prefs.grid ?? 'off';
+    if (!t || g === 'off' || altHeld) return null;
+    return Math.round(core.snapSeconds(f / fps(), t, g) * fps());
+  }
   function snap(f, extra = []) {
+    if (altHeld) return f;
+    const gs = gridSnap(f);
+    if (gs != null) {
+      // an exact hit on a section edge or the playhead still wins over the grid
+      const near = [state.frame, ...state.project.sections.flatMap((s) => [s.start, s.end]), ...extra].filter((c) => Math.abs(c - f) <= Math.min(tol(), 3));
+      return near.length ? near.reduce((a, b) => (Math.abs(b - f) < Math.abs(a - f) ? b : a)) : gs;
+    }
     if (!state.prefs.snap) return f;
     const cands = [...state.beats, state.frame, 0, total(), ...state.project.sections.flatMap((s) => [s.start, s.end]), ...extra];
     return TL.snapFrame(f, cands, tol());
@@ -57,6 +75,14 @@ export function createTimelinePanel(shell) {
       h('span.divider'),
       h('button.btn.text.sm', { type: 'button', class: state.prefs.snap ? 'on' : '', title: 'Snap to beats, sections and the playhead', 'aria-pressed': String(state.prefs.snap),
         onclick: () => { core.setPref('snap', !state.prefs.snap); buildToolbar(); } }, icon('bolt'), 'Snap'),
+      (() => {
+        const tp = core.getTempo(); const g = state.prefs.grid ?? 'off';
+        return h('span.tl-tempo',
+          h('button.btn.text.sm', { type: 'button', class: tp ? 'on' : '', title: tp ? 'Tempo and beat grid' : 'Set the tempo: detect the BPM, tap it, or type it', onclick: () => openTempoDialog() }, icon('music_note'), tp ? `${Math.round(tp.bpm * 10) / 10} BPM` : 'Tempo'),
+          tp ? h('button.btn.text.sm', { type: 'button', class: g !== 'off' ? 'on' : '', title: 'Snap by note length (hold Alt to move freely)', 'aria-label': 'Grid snap',
+            onclick: (e) => showMenu(e.currentTarget, [{ header: 'Snap to note length' }, { label: 'Off', icon: g === 'off' ? 'done' : null, run: () => { core.setPref('grid', 'off'); buildToolbar(); render(); } },
+              ...NOTE_DIVISIONS.map(([v, l]) => ({ label: l, icon: g === v ? 'done' : null, run: () => { core.setPref('grid', v); buildToolbar(); render(); } }))]) }, icon('grid_on'), g === 'off' ? 'Grid off' : (NOTE_DIVISIONS.find((x) => x[0] === g)?.[1] ?? g)) : null);
+      })(),
       h('button.btn.text.sm', { type: 'button', title: 'Add a section starting at the playhead', onclick: () => core.addSection() }, icon('flag'), 'Section'),
       h('button.btn.text.sm', { type: 'button', title: 'Show the layer at the playhead until the next cut', onclick: () => cutHere() }, icon('content_cut'), 'Split'),
       h('span.grow'),
@@ -82,6 +108,32 @@ export function createTimelinePanel(shell) {
 
   // ---------- render ----------
 
+  /** Bar / beat / sub-beat lines for the current tempo, as elements positioned in the track coordinate system. */
+  function gridLevel() {
+    const tp = core.getTempo(); if (!tp) return null;
+    const g = state.prefs.grid ?? 'off';
+    const pxPer = (div) => noteBeats(div, tp) * (60 / tp.bpm) * fps() * ppf;
+    let fine = g === 'off' ? '1/4' : g;
+    if (pxPer(fine) < 7) fine = '1/4';
+    if (pxPer(fine) < 7) fine = 'bar';
+    if (pxPer(fine) < 7) return null;
+    return { tp, fine, barPx: pxPer('bar') };
+  }
+  function gridEls(kind) {
+    const lv = gridLevel(); if (!lv) return [];
+    const { tp, fine, barPx } = lv;
+    const out = [];
+    for (const { f, beat } of core.tempoGrid(fine, 0, total())) {
+      const isBar = Math.abs(beat / tp.sig - Math.round(beat / tp.sig)) < 1e-6;
+      const isBeat = Math.abs(beat - Math.round(beat)) < 1e-6;
+      const cls = isBar ? 'bar' : isBeat ? 'beat' : 'sub';
+      const el = h('i.gl', { class: `${cls} ${kind}`, style: { left: `${xOf(f)}px` } });
+      if (kind === 'ruler' && isBar && barPx > 34) el.append(h('span.gl-n', String(Math.round(beat / tp.sig) + 1)));
+      out.push(el);
+    }
+    return out;
+  }
+
   function ruler() {
     const sec = Math.max(0.1, 1);
     const stepS = STEPS.find((s) => s * fps() * ppf >= 74) ?? STEPS.at(-1);
@@ -99,6 +151,7 @@ export function createTimelinePanel(shell) {
       tr.append(h('div.sect-band', { class: sel ? 'sel' : '', dataset: { role: 'sec', id: s.id }, style: { left: `${xOf(s.start)}px`, width: `${Math.max(6, xOf(s.end - s.start))}px`, '--c': s.color }, title: `${s.name} — drag to move with its keyframes (Alt: band only)` },
         h('span.sect-name', s.name), h('i.grip.l', { dataset: { role: 'sec-l', id: s.id } }), h('i.grip.r', { dataset: { role: 'sec-r', id: s.id } })));
     }
+    tr.append(...gridEls('ruler'));
     r.append(tr);
     return r;
   }
@@ -151,6 +204,18 @@ export function createTimelinePanel(shell) {
         h('i.grip.l', { dataset: { role: 'bar-l', id: def.id, i: String(i) } }), h('i.grip.r', { dataset: { role: 'bar-r', id: def.id, i: String(i) } })));
       });
     }
+    if (def.type === 'script') {
+      try {
+        const [W, H] = state.project.resolution;
+        const c = compileFor(def, W, H, total() / fps());
+        c.scenes.forEach((sc, i) => {
+          const a = sc.t0 * fps(); const b = sc.t1 * fps(); const g = sc.gone * fps();
+          tr.append(h('div.scene-seg', { style: { left: `${xOf(a)}px`, width: `${Math.max(6, xOf(b - a))}px` }, title: `Scene ${i + 1}: ${fmtTime(sc.t0)} to ${fmtTime(sc.t1)}. Drag to move it, drag the right end to change its length (Alt = free).`,
+            dataset: { role: 'scene', id: def.id, i: String(i), t0: String(sc.t0), t1: String(sc.t1) } },
+          h('span', String(i + 1)), g > b ? h('i.scene-tail', { style: { width: `${xOf(g - b)}px` } }) : null, h('i.grip.r', { dataset: { role: 'scene-r', id: def.id, i: String(i), t0: String(sc.t0), t1: String(sc.t1) } })));
+        });
+      } catch { /* a script that does not compile yet shows no blocks */ }
+    }
     // keyframe summary
     for (const t of tracks) for (const k of t.keys) tr.append(h('i.kf.mini', { style: { left: `${xOf(k.f)}px` }, dataset: { role: 'mini', f: String(k.f) } }));
     const rows = [h('div.tl-row', { class: isSel ? 'sel' : '', dataset: { layer: def.id } }, label, tr)];
@@ -192,6 +257,8 @@ export function createTimelinePanel(shell) {
     const closed = new Set(layers.filter((d) => d.type === 'deck' && d.collapsed).map((d) => d.id));
     for (const def of layers) { if (def.group && closed.has(def.group)) continue; for (const r of layerRow(def)) { if (def.group) r.classList?.add('in-folder'); content.append(r); } }
     if (!layers.length) content.append(h('div.empty-note', h('p', 'Add layers to see them here.')));
+    const gl = gridEls('rows');
+    if (gl.length) content.append(h('div.tl-grid', { 'aria-hidden': 'true' }, ...gl));
     content.append(playhead);
     placePlayhead();
     scroller.scrollLeft = keepL; scroller.scrollTop = keepT;
@@ -304,6 +371,12 @@ export function createTimelinePanel(shell) {
       drag = { kind: hit.role, id: d.id, i: Number(d.i), spans, start: f0, moved: false };
       scroller.setPointerCapture(e.pointerId); return;
     }
+    if (hit.role === 'scene' || hit.role === 'scene-r') {
+      core.select(d.id);
+      const def = core.layerById(d.id); if (!def) return;
+      drag = { kind: hit.role, id: d.id, si: Number(d.i), t0: Number(d.t0), t1: Number(d.t1), start: frameAt(e.clientX), text0: def.script?.text ?? '', moved: false };
+      scroller.setPointerCapture(e.pointerId); e.preventDefault(); return;
+    }
     if (hit.role === 'sec' || hit.role === 'sec-l' || hit.role === 'sec-r') {
       const s = state.project.sections.find((x) => x.id === d.id); if (!s) return;
       shell.selectedSection = s.id;
@@ -313,6 +386,7 @@ export function createTimelinePanel(shell) {
   });
 
   scroller.addEventListener('pointermove', (e) => {
+    altHeld = e.altKey;
     if (!drag) return;
     const f = frameAt(e.clientX);
     if (drag.kind === 'seek') { core.seek(clamp(f, 0, total() - 1)); return; }
@@ -346,6 +420,22 @@ export function createTimelinePanel(shell) {
       for (const k of selKeys.values()) { const nf = k.f + step; const kk = { ...k, f: clamp(nf, 0, total()) }; moved.set(`${kk.element}|${kk.property}|${kk.f}`, kk); }
       selKeys.clear(); for (const [a, b] of moved) selKeys.set(a, b);
       drag.applied = want; return;
+    }
+    if (drag.kind === 'scene' || drag.kind === 'scene-r') {
+      const dtF = Math.round(f) - Math.round(drag.start);
+      if (!drag.moved && Math.abs(dtF) < 1) return;
+      drag.moved = true;
+      const fr = fps();
+      if (drag.kind === 'scene') {
+        const want = snap(drag.t0 * fr + dtF, [])
+        const t0 = Math.max(0, want / fr);
+        core.setScript(drag.id, (x) => { x.text = moveScene(drag.text0, drag.si, drag.t0, t0); }, 'Move scene', `scene:${drag.id}:${drag.si}`);
+      } else {
+        const want = snap(drag.t1 * fr + dtF, []);
+        const t1 = Math.max(drag.t0 + 0.3, want / fr);
+        core.setScript(drag.id, (x) => { x.text = setSceneEnd(drag.text0, drag.si, drag.t0, t1); }, 'Change scene length', `scene:${drag.id}:${drag.si}:end`);
+      }
+      return;
     }
     if (drag.kind === 'bar' || drag.kind === 'bar-l' || drag.kind === 'bar-r') {
       const raw = Math.round(f) - Math.round(drag.start);
@@ -411,6 +501,8 @@ export function createTimelinePanel(shell) {
   }, { passive: true });
   for (const n of ['touchend', 'touchmove', 'touchcancel']) content.addEventListener(n, () => { clearTimeout(press); press = null; }, { passive: true });
 
+  window.addEventListener('keydown', (e) => { if (e.key === 'Alt') altHeld = true; });
+  window.addEventListener('keyup', (e) => { if (e.key === 'Alt') altHeld = false; });
   scroller.addEventListener('keydown', (e) => {
     if (e.key === 'Delete' || e.key === 'Backspace') { deleteSel(); e.preventDefault(); }
     else if (e.key === 'Escape') { selKeys.clear(); render(); }
@@ -439,7 +531,7 @@ export function createTimelinePanel(shell) {
     if (fit) render();
   })).observe(scroller);
 
-  const rerender = rafThrottle(() => { if (!drag || drag.kind === 'kf' || drag.kind.startsWith('bar') || drag.kind.startsWith('sec-')) render(); });
+  const rerender = rafThrottle(() => { if (!drag || drag.kind === 'kf' || drag.kind.startsWith('bar') || drag.kind.startsWith('sec-') || drag.kind.startsWith('scene')) render(); });
   on('project', rerender); on('selection', rerender); on('engine', rerender);
   on('frame', rafThrottle(placePlayhead));
   render();

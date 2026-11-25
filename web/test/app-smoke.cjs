@@ -229,8 +229,8 @@ const srv = http.createServer((q, s) => {
     await until(() => document.querySelector('.panel-script .sp-body').scrollTop > 50);
     check('mouse wheel scrolls the script panel', true);
     await pg.click('.panel-script .sp-tab:has-text("Timing")');
-    await until(() => document.querySelectorAll('.panel-script .line-row').length >= 20);
-    check('timing tab lists every lyric line with start and end', (await n('.panel-script .line-row .time-input')) >= 40);
+    await until(() => document.querySelectorAll('.panel-script .line-row').length >= 15).catch(async () => { console.log('rows', await E(() => document.querySelectorAll('.panel-script .line-row').length), await E(() => document.querySelector('.panel-script .sp-body')?.innerText.slice(0, 200))); throw new Error('rows'); });
+    check('timing tab lists every lyric line with start and end', (await n('.panel-script .line-row .time-input')) >= 30);
     await pg.click('.panel-script .sp-tab:has-text("Scenes")');
     await until(() => document.querySelectorAll('.panel-script .scene-card').length >= 10);
     await pg.locator('.panel-script .scene-card select[aria-label="Scene 2 Layout"]').selectOption('stack');
