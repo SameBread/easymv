@@ -451,6 +451,39 @@ const srv = http.createServer((q, s) => {
     check('vector: Add menu offers Shape, Chart and Table', /Shape/.test(addMenu) && /Chart/.test(addMenu) && /Table/.test(addMenu), addMenu);
     await pg.keyboard.press('Escape');
 
+    // ---- v1.4: script editor help, tempo, grid, recovery ----
+    await E(async () => { if (!easymv.core.state.bridge) { easymv.core.setMaster(new File([new Uint8Array(64)], 's.wav', { type: 'audio/wav' })); await easymv.core.analyze(); } });
+    await E(() => { const c = easymv.core; const sc = c.state.project.elements.filter((x) => x.type === 'script').at(-1); easymv.shell.showPanel('script'); c.select(sc.id); });
+    await until(() => document.querySelector('.panel-script .se-ta'));
+    await pg.click('.panel-script .sp-tab:has-text("Write")').catch(() => {});
+    await until(() => document.querySelector('.panel-script .se-ta'));
+    await pg.fill('.panel-script .se-ta', '[0:01] Hello\n::decoo bar\n');
+    await until(() => /decoo/.test(document.querySelector('.panel-script .se-issues')?.innerText ?? ''));
+    { const t = await pg.locator('.panel-script .se-issue').first().innerText(); check('editor: unknown instruction is reported with a fix', /deco/.test(t), t); }
+    await pg.locator('.panel-script .se-issue button.btn').first().click();
+    check('editor: quick fix rewrites the line', (await pg.inputValue('.panel-script .se-ta')).includes('::deco bar'));
+    await until(() => easymv.core.state.project.elements.find((x) => x.type === 'script').script.text.includes('::deco bar'));
+    check('editor: fix reaches the project', true);
+    await pg.focus('.panel-script .se-ta'); await pg.keyboard.press('Control+End'); await pg.keyboard.type('::dec');
+    await until(() => !document.querySelector('.se-suggest').hidden);
+    await pg.keyboard.press('Tab');
+    check('editor: Tab accepts a suggestion', /::deco\b/.test((await pg.inputValue('.panel-script .se-ta')).split('\n').pop()), JSON.stringify(await pg.inputValue('.panel-script .se-ta')));
+    // tempo
+    await E(() => { easymv.core.setTempo({ bpm: 120, offset: 0, sig: 4, changes: [] }, 'test', 'tempo'); });
+    const tp = await E(() => { const c = easymv.core; return { snap: c.snapSeconds(1.3, c.getTempo(), '1/4'), snap8: c.snapSeconds(1.3, c.getTempo(), '1/8'), bar: c.snapSeconds(3.1, c.getTempo(), 'bar') }; });
+    check('tempo: snapping by note length', Math.abs(tp.snap - 1.5) < 1e-6 && Math.abs(tp.snap8 - 1.25) < 1e-6 && Math.abs(tp.bar - 4) < 1e-6, JSON.stringify(tp));
+    await menu('Audio', 'Tempo & beat grid…');
+    check('tempo dialog opens from the Audio menu', await pg.locator('dialog[open]:has-text("Tempo & beat grid")').isVisible());
+    check('tempo dialog shows the BPM', /120 BPM/.test(await pg.locator('dialog[open] .deck-summary').innerText()));
+    await pg.keyboard.press('Escape');
+    // save clears dirty and the recovery slot
+    await E(() => { easymv.core.commit('x'); });
+    await pg.waitForTimeout(3000);
+    const rec = await E(() => easymv.core.checkRecovery());
+    check('recovery: an unsaved edit is snapshotted', !!rec && rec.layers > 0, JSON.stringify(rec));
+    await E(() => easymv.core.markSaved()); await pg.waitForTimeout(300);
+    check('recovery: saving clears the snapshot', (await E(() => easymv.core.checkRecovery())) === null);
+
     // Export dialog opens and mentions size
     await E(async () => { if (!easymv.core.state.bridge) { easymv.core.setMaster(new File([new Uint8Array(64)], 's.wav', { type: 'audio/wav' })); await easymv.core.analyze(); } });
     await until(() => easymv.core.state.bridge);

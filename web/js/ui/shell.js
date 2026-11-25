@@ -12,6 +12,7 @@ import { createTimelinePanel } from './panels/timeline.js';
 import { createSignalsPanel } from './panels/signals.js';
 import { createLyricsPanel } from './panels/lyrics.js';
 import { createScriptPanel } from './panels/script.js';
+import { openTempoDialog } from './tempodialog.js';
 import { VIS_PRESETS } from '../visualizer.js';
 import { FX_KINDS, FX_IDS } from '../effects.js';
 import { DECK_MODES, parseClock, clockText } from '../deck.js';
@@ -262,7 +263,8 @@ export function createShell(root, dv) {
       { label: 'Auto-key edits to animated properties', checked: state.prefs.autoKey, run: () => core.setPref('autoKey', !state.prefs.autoKey) }],
     Audio: () => [
       { label: 'Choose song…', icon: 'music_note', run: shell.pickAudio }, { label: 'Add stems…', icon: 'equalizer', run: shell.pickStems },
-      { label: 'Analyze', icon: 'refresh', disabled: !state.masterFile, run: shell.analyze }, { separator: true },
+      { label: 'Analyze', icon: 'refresh', disabled: !state.masterFile, run: shell.analyze },
+      { label: 'Tempo & beat grid…', icon: 'schedule', run: openTempoDialog }, { separator: true },
       { label: 'Run Automatic mode on images', icon: 'auto_fix_high', disabled: !state.bridge, run: () => { core.runAuto(); core.toast('Automatic links added.'); } },
       { label: 'Quick start', icon: 'bolt', run: shell.quickStart }, { separator: true },
       { label: 'Audio settings…', icon: 'settings', run: () => projectDialog() }],

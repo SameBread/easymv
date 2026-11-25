@@ -200,7 +200,7 @@ export async function runExport(opts) {
         target: output.target,
         video: { codec: 'avc', width, height, frameRate: fps },
         audio: { codec: 'aac', numberOfChannels: audio.channels, sampleRate: audio.sampleRate },
-        fastStart: output.streaming ? false : 'in-memory',
+        fastStart: output.streaming ? 'fragmented' : 'in-memory',
         firstTimestampBehavior: 'cross-track-offset',
       })
     : new WebmMuxer({
