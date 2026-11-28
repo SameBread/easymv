@@ -13,6 +13,7 @@ import { FX_KINDS, FX_IDS, fxSettings } from '../../effects.js';
 import { visSettings } from '../../visualizer.js';
 import { createVectorSections } from './vectorui.js';
 import { createDeckSections } from './deckui.js';
+import { createEffectSection, fxTabOf } from './fxui.js';
 
 const curveFn = {
   linear: (x) => x, easeIn: (x) => x * x, easeOut: (x) => 1 - (1 - x) * (1 - x),
@@ -31,7 +32,7 @@ export function createInspectorPanel(shell) {
     const def = state.selected && core.layerById(state.selected);
     if (!def) return 'none';
     return JSON.stringify([
-      def.id, def.type, def.fx?.kind, def.background, def._error, core.layerIndex(def.id), state.project.elements.length,
+      def.id, def.type, def.fx?.kind, def.type === 'effect' ? fxTabOf(def.id) : '', def.type === 'effect' && !document.activeElement?.closest?.('.fx-body') ? def.fx?.script : '', def.background, def._error, core.layerIndex(def.id), state.project.elements.length,
       state.project.connections.filter((c) => c.element === def.id).map((c) => [c.property, c.source, c.feature, c.curve, c.combine, !!c.muted]),
       state.project.tracks.filter((t) => t.element === def.id).map((t) => [t.property, t.mode, t.keys.length]),
       sources(), showAdvanced, [...expanded], def.vis?.mode, def.vis?.shape, def.vis?.gradient, def.visualBlend, def.shape?.prst, def.shape?.fillMode, def.deck && JSON.stringify([def.deck.start, def.deck.end, def.deck.mode, def.deck.fixed, def.deck.fade, def.deck.trans, def.deck.animate, def.deck.off, def.deck.slides.map((s) => [s.dur, s.trans, s.hidden, s.title])]), def.deck && core.deckTiming(def.id)?.total.toFixed(2), shell.deckSlide, def.chart?.type, def.chart?.grouping, def.table?.header,
@@ -163,32 +164,7 @@ export function createInspectorPanel(shell) {
       h('div.note', 'Tip: ' + (vis.mode === 'wave' ? 'the waveform follows the actual audio signal.' : 'bars follow the frequency spectrum, bass at the start of the shape.')));
   }
 
-  function effectSection(def) {
-    const fx = fxSettings(def);
-    const kinds = h('div.chips', { role: 'radiogroup' });
-    for (const id of FX_IDS) {
-      kinds.append(h('button.chip', { type: 'button', role: 'radio', 'aria-checked': String(fx.kind === id), class: fx.kind === id ? 'on' : '',
-        onclick: () => {
-          const d = FX_KINDS[id].defaults;
-          core.updateLayer(def.id, { 'fx.kind': id, 'fx.area': d.area, 'fx.c1': d.c1, 'fx.c2': d.c2, 'fx.size': d.size, 'fx.count': d.count, 'fx.pixel': d.pixel ?? 0, visualBlend: d.blend, name: layerName(def) === FX_KINDS[fx.kind].label ? FX_KINDS[id].label : def.name }, `Effect: ${FX_KINDS[id].label}`);
-        } }, icon(FX_KINDS[id].icon), h('span', FX_KINDS[id].label)));
-    }
-    const fire = fx.kind === 'pixelFire';
-    return section('Effect', 'auto_awesome',
-      kinds,
-      grid(
-        fire ? null : bindNum(def, 'fx.count', { label: 'Particles', step: 5, min: 1, max: 4000, def: fx.count }),
-        bindNum(def, 'fx.size', { label: fire ? 'Pixel size' : 'Size', step: 0.5, min: 1, max: 200, def: fx.size }),
-        bindNum(def, 'fx.speed', { label: 'Speed', step: 0.01, min: 0, max: 5, mul: 100, suffix: '%', def: fx.speed }),
-        bindNum(def, 'fx.wind', { label: 'Wind', step: 0.01, min: -1, max: 1, mul: 100, suffix: '%', def: fx.wind }),
-        bindNum(def, 'fx.area.0', { label: 'Width', step: 0.01, min: 0.05, max: 2, mul: 100, suffix: '%', def: fx.area[0] }),
-        bindNum(def, 'fx.area.1', { label: 'Height', step: 0.01, min: 0.05, max: 2, mul: 100, suffix: '%', def: fx.area[1] }),
-        bindNum(def, 'fx.seed', { label: 'Random seed', step: 1, min: 0, max: 9999, def: fx.seed })),
-      grid(bindColor(def, 'fx.c1', fire ? 'Hot color' : 'Color A'), bindColor(def, 'fx.c2', fire ? 'Cool color' : 'Color B')),
-      fire ? null : grid(bindNum(def, 'fx.pixel', { label: 'Lo-fi pixels', step: 1, min: 0, max: 64, suffix: 'px', def: fx.pixel, title: '0 = smooth. Above 0 snaps particles to a pixel grid and a low frame rate for a retro look.' }),
-        fx.pixel > 0 ? bindNum(def, 'fx.fps', { label: 'Lo-fi fps', step: 1, min: 1, max: 60, def: fx.fps }) : null),
-      h('div.note', 'Effects are deterministic: the same frame always looks the same, so scrubbing and export match the preview.'));
-  }
+  const effectSection = createEffectSection({ section, grid, bindNum, bindColor, build: () => build(), liveRef: () => live });
 
   function lyricsSection(def) {
     const n = def.lyrics?.lines?.length ?? 0;

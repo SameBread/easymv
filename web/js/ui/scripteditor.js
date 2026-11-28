@@ -3,6 +3,13 @@
 
 import { h, icon } from './dom.js';
 import { lintScript, applyFix, suggest } from '../lint.js';
+import { lintFx, applyFxFix, suggestFx, classifyFx } from '../fxscript.js';
+
+// The editor speaks two languages: lyrics scripts and effect scripts (fxscript.js).
+const LANGS = {
+  script: { classify: null, lint: lintScript, fix: applyFix, suggest },
+  fx: { classify: classifyFx, lint: lintFx, fix: applyFxFix, suggest: suggestFx },
+};
 
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -27,8 +34,9 @@ function classify(line) {
   return cls;
 }
 
-export function scriptEditor({ text, onInput, getContext, toast }) {
-  const ta = h('textarea.script-text.se-ta', { rows: 16, spellcheck: false, 'aria-label': 'Script text', autocapitalize: 'off', autocomplete: 'off' });
+export function scriptEditor({ text, onInput, getContext, toast, lang = 'script', rows = 16, placeholder = '' }) {
+  const L = LANGS[lang] ?? LANGS.script;
+  const ta = h('textarea.script-text.se-ta', { rows, placeholder, spellcheck: false, 'aria-label': 'Script text', autocapitalize: 'off', autocomplete: 'off' });
   ta.value = text;
   const pre = h('pre.se-hl', { 'aria-hidden': 'true' });
   const issuesEl = h('div.se-issues');
@@ -39,7 +47,7 @@ export function scriptEditor({ text, onInput, getContext, toast }) {
     const lines = ta.value.split('\n');
     const byLine = new Map(); for (const i of issues) { if (!byLine.has(i.line)) byLine.set(i.line, []); byLine.get(i.line).push(i); }
     const html = lines.map((ln, n) => {
-      const cls = classify(ln);
+      const cls = (L.classify ?? classify)(ln);
       for (const is of byLine.get(n) ?? []) for (let k = is.from; k < Math.min(is.to ?? ln.length, ln.length); k++) cls[k] = `${cls[k]} se-${is.severity}`.trim();
       let out = ''; let i = 0;
       while (i < ln.length) { let j = i + 1; while (j < ln.length && cls[j] === cls[i]) j++; out += cls[i] ? `<span class="${cls[i]}">${esc(ln.slice(i, j))}</span>` : esc(ln.slice(i, j)); i = j; }
@@ -64,16 +72,16 @@ export function scriptEditor({ text, onInput, getContext, toast }) {
     for (const is of issues.slice(0, 30)) {
       issuesEl.append(h('div.se-issue', { class: is.severity },
         h('button.se-go', { type: 'button', title: 'Show this line', onclick: () => jump(is.line, is.from, is.to) }, icon(is.severity === 'error' ? 'warning' : is.severity === 'warn' ? 'warning' : 'lightbulb'), h('span.se-ln', `line ${is.line + 1}`), h('span', is.msg)),
-        is.fix ? h('button.btn.tonal.sm', { type: 'button', onclick: () => { ta.value = applyFix(ta.value, is); onInput(ta.value); refresh(); } }, is.fix.label) : null));
+        is.fix ? h('button.btn.tonal.sm', { type: 'button', onclick: () => { ta.value = L.fix(ta.value, is); onInput(ta.value); refresh(); } }, is.fix.label) : null));
     }
     if (issues.length > 30) issuesEl.append(h('div.se-more', `…and ${issues.length - 30} more`));
   }
 
-  function refresh() { issues = lintScript(ta.value, getContext?.() ?? {}); paint(); renderIssues(); }
+  function refresh() { issues = L.lint(ta.value, getContext?.() ?? {}); paint(); renderIssues(); }
   function suggestions() {
     const pos = ta.selectionStart; const before = ta.value.slice(0, pos); const ln = before.split('\n').length - 1; const col = pos - (before.lastIndexOf('\n') + 1);
     const line = ta.value.split('\n')[ln] ?? '';
-    const s = ta.selectionStart === ta.selectionEnd ? suggest(line, col) : null;
+    const s = ta.selectionStart === ta.selectionEnd ? L.suggest(line, col) : null;
     bar.replaceChildren();
     if (!s || !s.items.length || (s.items.length === 1 && s.items[0].insert === s.replace)) { bar.hidden = true; bar._s = null; return; }
     bar._s = s; bar.hidden = false;

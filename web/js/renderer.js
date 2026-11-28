@@ -10,6 +10,7 @@
 
 import { P, defaultFit, fitSize } from './animation.js';
 import { visSettings, visAmplitudes, buildVisual, hexToRgb, adjustRgb } from './visualizer.js';
+import { sampleFx, compileEffectScript } from './fxcache.js';
 import { fxSettings, FX_KINDS, hexToRgb as fxRgb, PARTICLE_VERT, PARTICLE_FRAG, FIRE_VERT, FIRE_FRAG } from './effects.js';
 import { lyricsSettings, activeLines, lineEnd, highlightFraction, placeLine } from './lyrics.js';
 import { ensureFont, measureLine, drawLine } from './textcanvas.js';
@@ -236,10 +237,10 @@ export class Renderer {
     this.comp = program(gl, FS_VERT, COMPOSITE_FRAG, ['uTex', 'uOpacity']);
     this.visProg = program(gl, VIS_VERT, VIS_FRAG, ['uCanvas', 'uPos', 'uScale', 'uRot', 'uMirror', 'uOpacity']);
     this.fxProg = program(gl, PARTICLE_VERT, PARTICLE_FRAG, [
-      'uCanvas', 'uCenter', 'uArea', 'uTime', 'uKind', 'uCount', 'uDensity', 'uSize', 'uSpeed', 'uWind',
-      'uSeed', 'uC1', 'uC2', 'uRot', 'uPixel', 'uOpacity', 'uGlow']);
+      'uCanvas', 'uCenter', 'uArea', 'uKind', 'uCount', 'uDensity', 'uSize', 'uSeed', 'uC1', 'uC2', 'uRot', 'uPixel', 'uOpacity', 'uGlow',
+      'uPhase', 'uWindD', 'uLean', 'uTurb', 'uTint', 'uBurstA', 'uBurstB', 'uBurstC', 'uFlash']);
     this.fireProg = program(gl, FIRE_VERT, FIRE_FRAG, [
-      'uCanvas', 'uCenter', 'uArea', 'uRot', 'uTime', 'uCell', 'uSpeed', 'uWind', 'uSeed', 'uC1', 'uC2', 'uOpacity']);
+      'uCanvas', 'uCenter', 'uArea', 'uRot', 'uPhase', 'uCell', 'uLean', 'uTurb', 'uTint', 'uSeed', 'uC1', 'uC2', 'uOpacity']);
 
     // Unit quad as a triangle strip.
     this.vao = gl.createVertexArray();
@@ -543,10 +544,14 @@ export class Renderer {
     const c1 = adj(fx.c1); const c2 = adj(fx.c2);
     const pixelPx = fx.pixel > 0 || fx.kind === 'pixelFire' ? Math.max(1, Math.round((fx.pixel || fx.size) * (minDim / 1080))) : 0;
     const t = pixelPx > 0 ? Math.floor(it.time * fx.fps) / fx.fps : it.time;
-    const sizePx = fx.size * (minDim / 1080);
     const cx = props[P.positionX] * this.width; const cy = props[P.positionY] * this.height;
-    const density = Math.min(1, props[P.intensity]);
-    const glow = Math.max(1, props[P.intensity]);
+    // scripted events (gusts, speed changes, bursts, flashes...) arrive as a handful of numbers for this exact moment
+    const prog = compileEffectScript(fx.script);
+    const m = sampleFx(prog, t, { speed: fx.speed, wind: fx.wind, windY: fx.windY }, kind.grav);
+    const sizePx = fx.size * m.size * (minDim / 1080);
+    const density = Math.min(1, props[P.intensity] * m.density);
+    const glow = Math.max(1, props[P.intensity]) * m.glow;
+    const tint = m.tint[3] > 0 ? [m.tint[0], m.tint[1], m.tint[2], m.tint[3]] : [0, 0, 0, 0];
     if (fx.kind === 'pixelFire') {
       const { p, u } = this.fireProg;
       gl.useProgram(p);
@@ -554,14 +559,16 @@ export class Renderer {
       gl.uniform2f(u.uCenter, cx, cy);
       gl.uniform2f(u.uArea, area[0], area[1]);
       gl.uniform1f(u.uRot, props[P.rotation]);
-      gl.uniform1f(u.uTime, t);
+      gl.uniform1f(u.uPhase, m.phase);
       gl.uniform1f(u.uCell, pixelPx);
-      gl.uniform1f(u.uSpeed, fx.speed);
-      gl.uniform1f(u.uWind, fx.wind);
+      gl.uniform2f(u.uLean, m.lx, m.ly);
+      gl.uniform1f(u.uTurb, fx.turb * m.turb);
+      gl.uniform4fv(u.uTint, tint);
       gl.uniform1ui(u.uSeed, fx.seed >>> 0);
       gl.uniform3fv(u.uC1, c1); gl.uniform3fv(u.uC2, c2);
-      gl.uniform1f(u.uOpacity, props[P.opacity]);
+      gl.uniform1f(u.uOpacity, props[P.opacity] * Math.min(1, m.density));
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      if (m.flash[3] > 0.004) this._drawFlash(it, m, area, cx, cy);
       return;
     }
     const { p, u } = this.fxProg;
@@ -569,20 +576,53 @@ export class Renderer {
     gl.uniform2f(u.uCanvas, this.width, this.height);
     gl.uniform2f(u.uCenter, cx, cy);
     gl.uniform2f(u.uArea, area[0], area[1]);
-    gl.uniform1f(u.uTime, t);
     gl.uniform1i(u.uKind, kind.id);
     gl.uniform1i(u.uCount, fx.count);
     gl.uniform1f(u.uDensity, density);
     gl.uniform1f(u.uSize, sizePx);
-    gl.uniform1f(u.uSpeed, fx.speed);
-    gl.uniform1f(u.uWind, fx.wind);
     gl.uniform1ui(u.uSeed, fx.seed >>> 0);
     gl.uniform3fv(u.uC1, c1); gl.uniform3fv(u.uC2, c2);
     gl.uniform1f(u.uRot, props[P.rotation]);
     gl.uniform1f(u.uPixel, pixelPx);
     gl.uniform1f(u.uOpacity, props[P.opacity]);
     gl.uniform1f(u.uGlow, glow);
+    gl.uniform1f(u.uPhase, m.phase);
+    gl.uniform2f(u.uWindD, m.dx, m.dy);
+    gl.uniform2f(u.uLean, m.lx, m.ly);
+    gl.uniform1f(u.uTurb, fx.turb * m.turb);
+    gl.uniform4fv(u.uTint, tint);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, fx.count);
+    // one-off bursts from the script: a draw each (few and short-lived)
+    for (const b of m.bursts) {
+      gl.uniform1i(u.uKind, 30);
+      gl.uniform1i(u.uCount, b.count);
+      gl.uniform4f(u.uBurstA, b.age, b.life, b.ox, b.oy);
+      gl.uniform4f(u.uBurstB, b.spread, b.power, b.ang ?? -10, kind.burst?.shape ?? 0);
+      gl.uniform2f(u.uBurstC, kind.burst?.rainbow ? 1 : 0, b.seed);
+      gl.uniform1f(u.uDensity, 1);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, b.count);
+    }
+    if (m.flash[3] > 0.004) this._drawFlash(it, m, area, cx, cy);
+  }
+
+  /** A scripted flash: the effect's area washed with light that fades quickly. */
+  _drawFlash(it, m, area, cx, cy) {
+    const gl = this.gl;
+    const { p, u } = this.fxProg;
+    gl.useProgram(p);
+    gl.uniform2f(u.uCanvas, this.width, this.height);
+    gl.uniform2f(u.uCenter, cx, cy);
+    gl.uniform2f(u.uArea, area[0], area[1]);
+    gl.uniform1i(u.uKind, 31);
+    gl.uniform1i(u.uCount, 1);
+    gl.uniform1f(u.uDensity, 1);
+    gl.uniform1f(u.uRot, it.props[P.rotation]);
+    gl.uniform1f(u.uPixel, 0);
+    gl.uniform1f(u.uOpacity, it.props[P.opacity]);
+    gl.uniform1f(u.uGlow, 1);
+    gl.uniform4f(u.uTint, 0, 0, 0, 0);
+    gl.uniform4f(u.uFlash, m.flash[0], m.flash[1], m.flash[2], m.flash[3]);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, 1);
   }
 
   // ---------- script (kinetic text) ----------

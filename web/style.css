@@ -524,3 +524,22 @@ textarea.script-text.se-ta::selection { background: color-mix(in srgb, var(--md-
 .hist-list li.now .hist-item { background: var(--md-primary-container); color: var(--md-on-primary-container); font-weight: 600; }
 .hist-list li.redo .hist-item { opacity: .5; }
 .hist-now { margin-left: auto; font-size: 11px; }
+
+/* effect inspector: scrollable effect box, tabs, events */
+.fx-boxwrap { position: relative; }
+.fx-box { display: flex; flex-wrap: wrap; gap: 6px; max-height: 142px; overflow-y: auto; padding: 2px 2px 14px; scrollbar-width: thin; }
+.fx-fade { position: absolute; left: 0; right: 8px; bottom: 22px; height: 18px; pointer-events: none; background: linear-gradient(transparent, var(--md-surface)); }
+.fx-tabs { display: flex; gap: 2px; margin: 8px 0 6px; border-bottom: 1px solid var(--md-outline-variant); }
+.fx-tab { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 0; background: none; color: var(--md-on-surface-variant); font: inherit; font-size: 12px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.fx-tab.on { color: var(--md-primary); border-bottom-color: var(--md-primary); font-weight: 600; }
+.fx-tab .icon { font-size: 16px; }
+.fx-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--md-primary); }
+.fx-body { display: flex; flex-direction: column; gap: 8px; }
+.fx-quick .chip { height: 28px; }
+.fx-graph { width: 100%; height: 96px; border-radius: 8px; display: block; }
+.fx-legend { display: flex; gap: 12px; font-size: 11px; color: var(--md-on-surface-variant); padding-top: 2px; }
+.fx-legend .lg::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; background: currentColor; }
+.fx-legend .w::before { background: rgb(90,170,255); } .fx-legend .s::before { background: rgb(255,170,60); } .fx-legend .b::before { background: #ff6b9d; } .fx-legend .f::before { background: #fff; }
+.fx-help summary { cursor: pointer; font-size: 12px; color: var(--md-primary); }
+.fx-verbs { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 6px 0; font-size: 12px; }
+.fx-verbs dt { font-family: ui-monospace, Consolas, monospace; font-weight: 700; } .fx-verbs dd { margin: 0; color: var(--md-on-surface-variant); }
